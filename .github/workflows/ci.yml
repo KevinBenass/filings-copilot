@@ -1,0 +1,19 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      # The `ml` extra (torch) is not needed: tests use deterministic stand-in models.
+      - run: uv sync --extra serve
+      - run: uv run ruff check .
+      - run: uv run pytest --cov=filings_copilot --cov-report=term-missing
