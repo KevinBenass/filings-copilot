@@ -1,0 +1,22 @@
+# Retrieval ablation ladder. Each step adds one component on top of the previous one,
+# so the delta between rows is the marginal value of that component.
+# Overrides use dotted keys into configs/default.yaml.
+
+- name: bm25
+  overrides: {retrieval.mode: bm25, retrieval.rerank: false, retrieval.use_filters: false, chunking.context: none, chunking.strategy: fixed}
+- name: dense
+  overrides: {retrieval.mode: dense, retrieval.rerank: false, retrieval.use_filters: false, chunking.context: none, chunking.strategy: fixed}
+- name: hybrid_rrf
+  overrides: {retrieval.mode: hybrid, retrieval.rerank: false, retrieval.use_filters: false, chunking.context: none, chunking.strategy: fixed}
+- name: + structure_chunks
+  overrides: {retrieval.mode: hybrid, retrieval.rerank: false, retrieval.use_filters: false, chunking.context: none, chunking.strategy: structure}
+- name: + metadata_context
+  overrides: {retrieval.mode: hybrid, retrieval.rerank: false, retrieval.use_filters: false, chunking.context: metadata, chunking.strategy: structure}
+- name: + llm_context
+  overrides: {retrieval.mode: hybrid, retrieval.rerank: false, retrieval.use_filters: false, chunking.context: llm, chunking.strategy: structure}
+- name: + rerank
+  overrides: {retrieval.mode: hybrid, retrieval.rerank: true, retrieval.use_filters: false, chunking.context: llm, chunking.strategy: structure}
+- name: + filters
+  overrides: {retrieval.mode: hybrid, retrieval.rerank: true, retrieval.use_filters: true, chunking.context: llm, chunking.strategy: structure}
+- name: + decomposition
+  overrides: {retrieval.mode: hybrid, retrieval.rerank: true, retrieval.use_filters: true, retrieval.decompose: true, chunking.context: llm, chunking.strategy: structure}

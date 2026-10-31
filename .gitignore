@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Data is reproducible via `make data index`; only the reviewed eval set is versioned.
+data/*
+!data/eval/
+data/eval/*
+!data/eval/gold.jsonl
+!data/eval/README.md
