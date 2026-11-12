@@ -132,13 +132,21 @@ def chunk(
 ) -> None:
     """Chunk the parsed corpus (and contextualize with the LLM if configured)."""
     from filings_copilot.ingest.store import build_chunks, load_chunks
+    from filings_copilot.llm import LLM
 
     s = settings_for(config, set_)
-    path, est = build_chunks(s, dry_run=dry_run)
+    llm = LLM(s.llm, s.resolve(s.llm.cache_path))
+    path, est = build_chunks(s, llm=llm, dry_run=dry_run)
     if s.chunking.context == "llm":
         console.print(f"LLM contextualization estimate: ${est:.2f}")
     if not dry_run:
         console.print(f"[green]{len(load_chunks(path)):,} chunks -> {path}")
+        u = llm.total
+        if u.calls or u.cache_hits:
+            console.print(
+                f"API calls this run: {u.calls:,} (cost ${u.cost_usd:.2f}); "
+                f"served from local cache: {u.cache_hits:,} (free)"
+            )
 
 
 @app.command()

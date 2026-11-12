@@ -43,6 +43,7 @@ class EmbeddingConfig(BaseModel):
     model: str = "BAAI/bge-base-en-v1.5"
     query_instruction: str = ""
     batch_size: int = 32
+    device: str = "auto"  # auto | cpu | cuda | mps
     index_dir: Path = Path("data/index")
 
 
