@@ -65,6 +65,7 @@ class EdgarClient:
         structured notes) push their older 10-Ks onto the paginated history files.
         """
         data = self.get(SUBMISSIONS_URL.format(cik=cik)).json()
+        self.last_entity_name = data.get("name", "")
         yield data["filings"]["recent"]
         for page in data["filings"].get("files", []):
             if page.get("filingTo", "9999")[:4] < str(min_year):
@@ -114,24 +115,35 @@ def fiscal_year_from_period(period_of_report: str) -> int:
 
 
 def download_corpus(
-    tickers: list[str], form: str, fiscal_years: list[int], user_agent: str, raw_dir: Path
-) -> tuple[list[Path], dict[str, list[int]]]:
+    tickers: list[str],
+    form: str,
+    fiscal_years: list[int],
+    user_agent: str,
+    raw_dir: Path,
+    ciks: dict[str, str] | None = None,
+) -> tuple[list[Path], dict[str, str]]:
     """Download filings as raw HTML with a sidecar metadata JSON. Idempotent.
 
-    Returns the written paths and, per ticker, the fiscal years that could not be found.
+    Returns the written paths and, per ticker, why some fiscal years are missing.
     """
     raw_dir.mkdir(parents=True, exist_ok=True)
     client = EdgarClient(user_agent)
-    tmap = client.ticker_map()
+    ciks = {t.upper(): str(c).zfill(10) for t, c in (ciks or {}).items()}
+    tmap = client.ticker_map() if any(t not in ciks for t in tickers) else {}
     written: list[Path] = []
-    missing: dict[str, list[int]] = {}
+    missing: dict[str, str] = {}
     for ticker in tickers:
-        if ticker not in tmap:
-            missing[ticker] = list(fiscal_years)
+        if ticker in ciks:
+            cik, company = ciks[ticker], ""
+        elif ticker in tmap:
+            cik, company = tmap[ticker]
+        else:
+            missing[ticker] = "ticker not in the SEC ticker list; add its CIK under corpus.ciks"
             continue
-        cik, company = tmap[ticker]
         found: set[int] = set()
         for meta in client.annual_filings(ticker, cik, company, form, fiscal_years):
+            if not meta.company:
+                meta.company = client.last_entity_name or ticker
             html_path = raw_dir / f"{meta.doc_id}.html"
             meta_path = raw_dir / f"{meta.doc_id}.json"
             if not html_path.exists():
@@ -140,5 +152,7 @@ def download_corpus(
             written.append(html_path)
             found.add(meta.fiscal_year)
         if gaps := sorted(set(fiscal_years) - found):
-            missing[ticker] = gaps
+            missing[ticker] = (
+                f"no {form} on EDGAR for fiscal years {', '.join(map(str, gaps))} (CIK {cik})"
+            )
     return written, missing
