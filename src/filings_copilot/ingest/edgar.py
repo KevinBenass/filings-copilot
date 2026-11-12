@@ -121,6 +121,7 @@ def download_corpus(
     user_agent: str,
     raw_dir: Path,
     ciks: dict[str, str] | None = None,
+    names: dict[str, str] | None = None,
 ) -> tuple[list[Path], dict[str, str]]:
     """Download filings as raw HTML with a sidecar metadata JSON. Idempotent.
 
@@ -142,8 +143,9 @@ def download_corpus(
             continue
         found: set[int] = set()
         for meta in client.annual_filings(ticker, cik, company, form, fiscal_years):
-            if not meta.company:
-                meta.company = client.last_entity_name or ticker
+            meta.company = (
+                (names or {}).get(ticker) or meta.company or client.last_entity_name or ticker
+            )
             html_path = raw_dir / f"{meta.doc_id}.html"
             meta_path = raw_dir / f"{meta.doc_id}.json"
             if not html_path.exists():

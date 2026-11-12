@@ -58,6 +58,7 @@ def download() -> None:
         s.sec_user_agent,
         s.resolve(s.corpus.raw_dir),
         s.corpus.ciks,
+        s.corpus.names,
     )
     console.print(f"[green]{len(paths)} filings in {s.corpus.raw_dir}")
     for ticker, reason in missing.items():
