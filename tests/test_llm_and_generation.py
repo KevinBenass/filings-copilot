@@ -115,3 +115,18 @@ def test_leakage_ratio():
         leakage_ratio("How did AI demand affect sales?", "Data center revenue growth was strong")
         == 0.0
     )
+
+
+def test_requests_match_installed_sdk_signature(settings):
+    """Every request we build must be accepted by the installed anthropic SDK."""
+    import inspect
+
+    import anthropic
+
+    accepted = set(inspect.signature(anthropic.resources.messages.Messages.create).parameters)
+    fake = FakeAnthropic(lambda req: '{"answerable": true, "answer": "x", "citations": []}')
+    llm = LLM(settings.llm, None, client=fake)
+    llm.complete("q", system="s", cached_prefix="doc", max_tokens=10)
+    generate_answer("q", passages(), llm)
+    for request in fake.calls:
+        assert set(request) <= accepted, set(request) - accepted

@@ -50,11 +50,10 @@ llm:
   answer_model: claude-sonnet-5-5
   judge_model: claude-haiku-5-5
   max_tokens: 1024
-  temperature: 0.0
   cache_path: data/llm_cache.sqlite
-  # Parallel requests. New API accounts have low rate limits (tier 1: ~50 requests/min);
-  # raise this once your Console shows a higher tier. Rate-limited calls wait and retry.
-  max_concurrency: 4
+  # Parallel requests. On a low API tier (tier 1: ~50 requests/min) lower this to 4;
+  # rate-limited calls wait and retry either way.
+  max_concurrency: 16
   max_retries: 10
   # USD per million tokens. Verify against the current Anthropic pricing page.
   prices:

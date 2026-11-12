@@ -126,7 +126,7 @@ tests/         unit tests with a synthetic 10-K and stand-in models (no network,
 
 ## Limitations and next steps
 
-- **LLM-as-judge.** Generation metrics come from an LLM grader. It runs at temperature 0 on a different model tier than the generator, and a sample is checked by hand, but it is not a substitute for expert labels.
+- **LLM-as-judge.** Generation metrics come from an LLM grader. It runs on a different model tier than the generator, and a sample is checked by hand, but it is not a substitute for expert labels.
 - **Synthetic questions** skew toward what is easy to ask about a single passage. Multi-hop and unanswerable questions are included to counter this, and the review step removes unnatural ones.
 - **Corpus size.** 24 filings is enough to separate the techniques, not to claim production scale. The exact dense index would be swapped for an ANN index (HNSW) beyond a few hundred thousand chunks.
 - **Numbers from tables** are read by the LLM, not computed. A natural extension is routing quantitative questions to the structured XBRL data, which the multi-agent project does.
