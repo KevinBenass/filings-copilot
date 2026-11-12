@@ -17,13 +17,13 @@ flowchart LR
         B --> C[Structure-aware chunker<br/>tables kept whole]
         C --> D[Contextual headers<br/>metadata + Claude Haiku]
         D --> E[(BM25 index)]
-        D --> F[(Dense index<br/>bge-base)]
+        D --> F[(Dense index<br/>bge-small)]
     end
     subgraph Query["Query time"]
         Q[Question] --> P[Query planner<br/>ticker/year filters<br/>+ decomposition]
         P --> E & F
         E & F --> R[Reciprocal rank fusion]
-        R --> X[Cross-encoder reranker<br/>bge-reranker-v2-m3]
+        R --> X[Cross-encoder reranker<br/>MiniLM-L6]
         X --> G[Claude Sonnet<br/>cited answer or abstain]
     end
     G --> O[Answer + citations<br/>FastAPI · Streamlit · CLI]
@@ -36,10 +36,10 @@ flowchart LR
 | Chunking | Paragraph packing within an item; tables never split mid-row; captions attached | Fixed windows cut tables in half, the most common failure on financial questions |
 | Context | `company · FY · section` header, then a 1–2 sentence situating context written by Claude Haiku | "Revenue increased 12%" is unretrievable without knowing whose revenue and when. Section text is sent as a cached prompt prefix, so each extra chunk costs ~10% of the window |
 | Lexical | BM25 | Exact terms matter in finance: "diluted EPS", product names, figures |
-| Dense | `BAAI/bge-base-en-v1.5`, exact inner-product search | 25k chunks fit in memory; exact search is a few ms and has perfect recall |
+| Dense | `BAAI/bge-small-en-v1.5`, exact inner-product search | 12k chunks fit in memory; exact search is a few ms and has perfect recall. Model sized to run on a laptop CPU (see below) |
 | Fusion | Reciprocal rank fusion (k=60) | Uses ranks only, so BM25 and cosine scores never need calibrating |
 | Filters | Rule-based ticker/year extraction; hard ticker filter, soft year filter (Y and Y+1) | A FY2023 figure is often best found in the FY2024 report's comparison table |
-| Rerank | Cross-encoder over the top 40 | Reads query and passage jointly; the biggest single precision gain in most RAG systems |
+| Rerank | Cross-encoder (`ms-marco-MiniLM-L-6-v2`) over the top 30 | Reads query and passage jointly; usually the biggest single precision gain in a RAG system |
 | Generation | Claude Sonnet, JSON output, mandatory `[n]` citations, abstain path | Every claim is traceable; "not in the filings" is a valid answer |
 
 ## Corpus
@@ -128,6 +128,7 @@ tests/         unit tests with a synthetic 10-K and stand-in models (no network,
 
 - **LLM-as-judge.** Generation metrics come from an LLM grader. It runs on a different model tier than the generator, and a sample is checked by hand, but it is not a substitute for expert labels.
 - **Synthetic questions** skew toward what is easy to ask about a single passage. Multi-hop and unanswerable questions are included to counter this, and the review step removes unnatural ones.
+- **Model sizes are chosen for a laptop CPU.** The full pipeline, including four embedding variants for the ablation and reranking every evaluation query, runs on an Intel MacBook with no GPU. A larger embedder (`bge-large-en-v1.5`) and reranker (`bge-reranker-v2-m3`) are one config change away on a GPU and would likely lift absolute scores; the ablation measures relative gains, which this setup captures.
 - **Corpus size.** 24 filings is enough to separate the techniques, not to claim production scale. The exact dense index would be swapped for an ANN index (HNSW) beyond a few hundred thousand chunks.
 - **Numbers from tables** are read by the LLM, not computed. A natural extension is routing quantitative questions to the structured XBRL data, which the multi-agent project does.
 
