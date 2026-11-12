@@ -57,10 +57,11 @@ def download() -> None:
         s.corpus.fiscal_years,
         s.sec_user_agent,
         s.resolve(s.corpus.raw_dir),
+        s.corpus.ciks,
     )
     console.print(f"[green]{len(paths)} filings in {s.corpus.raw_dir}")
-    for ticker, years in missing.items():
-        console.print(f"[yellow]Not found: {ticker} fiscal years {', '.join(map(str, years))}")
+    for ticker, reason in missing.items():
+        console.print(f"[yellow]Not found: {ticker}: {reason}")
 
 
 @app.command()
