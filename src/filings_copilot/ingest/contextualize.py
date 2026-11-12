@@ -67,7 +67,10 @@ def estimate_cost(
 
 
 def contextualize(
-    docs: list[ParsedFiling], chunks_by_doc: dict[str, list[Chunk]], llm: LLM, workers: int = 8
+    docs: list[ParsedFiling],
+    chunks_by_doc: dict[str, list[Chunk]],
+    llm: LLM,
+    workers: int | None = None,
 ) -> None:
     """Prepend LLM context to every chunk in place (after the metadata header)."""
     for doc in track(docs, description="Contextualizing"):
@@ -85,5 +88,5 @@ def contextualize(
                 chunk.context = f"{header}\n{resp.text.strip()}" if header else resp.text.strip()
 
             run(group[0])  # first call writes the prompt cache
-            with ThreadPoolExecutor(max_workers=workers) as pool:
+            with ThreadPoolExecutor(max_workers=workers or llm.cfg.max_concurrency) as pool:
                 list(pool.map(run, group[1:]))

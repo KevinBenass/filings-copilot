@@ -103,7 +103,10 @@ def run_ablation(
 
 
 def run_generation(
-    settings: Settings, gold: list[GoldQuestion], limit: int | None = None, workers: int = 4
+    settings: Settings,
+    gold: list[GoldQuestion],
+    limit: int | None = None,
+    workers: int | None = None,
 ) -> pd.DataFrame:
     llm = LLM(settings.llm, settings.resolve(settings.llm.cache_path))
     retriever = build_retriever(settings, llm)
@@ -127,7 +130,7 @@ def run_generation(
         row.update(judge(q, ans, llm))
         return row
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
+    with ThreadPoolExecutor(max_workers=workers or settings.llm.max_concurrency) as pool:
         rows = list(
             track(
                 pool.map(run, retrieved), total=len(retrieved), description="Generating + judging"

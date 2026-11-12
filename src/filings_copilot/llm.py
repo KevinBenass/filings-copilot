@@ -57,7 +57,7 @@ class LLM:
         if self._client is None:
             import anthropic  # imported lazily so retrieval-only use needs no API key
 
-            self._client = anthropic.Anthropic(max_retries=5)
+            self._client = anthropic.Anthropic(max_retries=self.cfg.max_retries)
         return self._client
 
     def price(self, model: str, usage: Usage) -> float:

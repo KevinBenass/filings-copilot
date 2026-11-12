@@ -249,7 +249,7 @@ def _multi(llm: LLM, pair, qid: str) -> GoldQuestion | None:
     )
 
 
-def build_gold_set(settings: Settings, llm: LLM, workers: int = 6) -> list[GoldQuestion]:
+def build_gold_set(settings: Settings, llm: LLM, workers: int | None = None) -> list[GoldQuestion]:
     cfg = settings.eval
     rng = random.Random(cfg.seed)
     docs = load_parsed(settings.resolve(settings.corpus.parsed_dir))
@@ -274,7 +274,10 @@ def build_gold_set(settings: Settings, llm: LLM, workers: int = 6) -> list[GoldQ
         )
 
     results: list[GoldQuestion] = []
-    with Progress() as progress, ThreadPoolExecutor(max_workers=workers) as pool:
+    with (
+        Progress() as progress,
+        ThreadPoolExecutor(max_workers=workers or llm.cfg.max_concurrency) as pool,
+    ):
         task = progress.add_task("Generating questions", total=len(jobs))
         for q in pool.map(run, enumerate(jobs)):
             progress.advance(task)
