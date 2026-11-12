@@ -40,7 +40,7 @@ class ChunkingConfig(BaseModel):
 
 
 class EmbeddingConfig(BaseModel):
-    model: str = "BAAI/bge-base-en-v1.5"
+    model: str = "BAAI/bge-small-en-v1.5"
     query_instruction: str = ""
     batch_size: int = 32
     device: str = "auto"  # auto | cpu | cuda | mps
@@ -54,8 +54,8 @@ class RetrievalConfig(BaseModel):
     use_filters: bool = True
     decompose: bool = False
     rerank: bool = True
-    reranker_model: str = "BAAI/bge-reranker-v2-m3"
-    rerank_top_n: int = 40
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rerank_top_n: int = 30
     top_k: int = 8
 
 
