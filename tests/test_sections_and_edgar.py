@@ -135,3 +135,41 @@ def test_corpus_table_written_to_readme(parsed, tmp_path):
         and "[FY2025](https://example.com/x.htm)" in text
         and "1 annual reports" in text
     )
+
+
+def test_financial_section_appended_at_end():
+    """Exxon-style: Items 7, 7A, 8 are pointers; the real content follows Part IV."""
+    pointer = "Reference is made to the Financial Section of this report. " * 8  # > 400 chars
+    text = "\n\n".join(
+        [
+            "Item 1. Business",
+            FILLER,
+            "Item 1A. Risk Factors",
+            FILLER,
+            "Item 7. Management's Discussion and Analysis",
+            "See the Financial Section.",
+            "Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+            pointer,
+            "Item 8. Financial Statements and Supplementary Data",
+            pointer,
+            "Item 9A. Controls and Procedures",
+            FILLER,
+            "Item 16. Form 10-K Summary",
+            "None.\n" + FILLER,
+            "FINANCIAL SECTION",
+            "MANAGEMENT’S DISCUSSION AND ANALYSIS OF FINANCIAL CONDITION AND RESULTS OF OPERATIONS",
+            FILLER * 3,
+            "MARKET RISKS, INFLATION AND OTHER UNCERTAINTIES",
+            FILLER,
+            "REPORT OF INDEPENDENT REGISTERED PUBLIC ACCOUNTING FIRM",
+            FILLER * 4,
+            "CONSOLIDATED STATEMENT OF INCOME",
+            FILLER,
+        ]
+    )
+    sections = find_sections(text)
+    assert [s.item for s in sections] == ["1", "1A", "9A", "16", "7", "7A", "8"]
+    by_item = {s.item: s for s in sections}
+    assert text[by_item["7"].start :].startswith("MANAGEMENT’S DISCUSSION")
+    assert text[by_item["8"].start :].startswith("REPORT OF INDEPENDENT")
+    assert by_item["8"].end == len(text)
