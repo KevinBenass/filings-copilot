@@ -9,8 +9,7 @@ One judge call per question returns:
 Abstention is scored without the judge: unanswerable questions should yield
 answerable=false, and answerable ones should not.
 
-Known limitation (stated in the README): the judge is itself an LLM. We pin temperature 0,
-use a different model tier than the generator, and spot-check a sample by hand.
+Known limitation (stated in the README): the judge is itself an LLM. We use a different model tier than the generator, and spot-check a sample by hand.
 """
 
 from __future__ import annotations

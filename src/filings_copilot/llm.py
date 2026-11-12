@@ -79,7 +79,6 @@ class LLM:
         system: str | None = None,
         cached_prefix: str | None = None,
         max_tokens: int | None = None,
-        temperature: float | None = None,
     ) -> LLMResponse:
         """One-turn completion.
 
@@ -90,7 +89,6 @@ class LLM:
         params = {
             "model": model,
             "max_tokens": max_tokens or self.cfg.max_tokens,
-            "temperature": self.cfg.temperature if temperature is None else temperature,
         }
         content: list[dict[str, Any]] = []
         if cached_prefix:

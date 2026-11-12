@@ -68,7 +68,6 @@ class LLMConfig(BaseModel):
     answer_model: str = "claude-sonnet-5-5"
     judge_model: str = "claude-haiku-5-5"
     max_tokens: int = 1024
-    temperature: float = 0.0
     cache_path: Path = Path("data/llm_cache.sqlite")
     max_concurrency: int = 4
     max_retries: int = 10

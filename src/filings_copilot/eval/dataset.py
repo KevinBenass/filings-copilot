@@ -154,7 +154,6 @@ def _single(llm: LLM, doc: ParsedFiling, sec, block, qtype: str, qid: str) -> Go
             ),
             model=llm.cfg.answer_model,
             max_tokens=400,
-            temperature=0.7,
         )
     except ValueError:
         return None
@@ -225,7 +224,6 @@ def _multi(llm: LLM, pair, qid: str) -> GoldQuestion | None:
             ),
             model=llm.cfg.answer_model,
             max_tokens=500,
-            temperature=0.7,
         )
     except ValueError:
         return None
@@ -305,7 +303,6 @@ def build_gold_set(settings: Settings, llm: LLM, workers: int | None = None) -> 
                 ),
                 model=llm.cfg.answer_model,
                 max_tokens=500,
-                temperature=0.7,
             )
         except ValueError:
             continue
