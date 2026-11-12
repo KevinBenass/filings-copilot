@@ -180,24 +180,52 @@ def _candidates(text: str, include_tables: bool) -> list[tuple[int, str, str]]:
     return out
 
 
+ITEM_ORDER = list(ITEM_TITLES)
+
+
+def _spans(
+    candidates: list[tuple[int, str, str]], text_len: int
+) -> list[tuple[int, str, str, int]]:
+    return [
+        (
+            start,
+            item,
+            title,
+            (candidates[i + 1][0] if i + 1 < len(candidates) else text_len) - start,
+        )
+        for i, (start, item, title) in enumerate(candidates)
+    ]
+
+
 def _pick(
     candidates: list[tuple[int, str, str]], text_len: int, prefer_last: bool
 ) -> dict[str, tuple[int, str]]:
     """Choose one heading per item.
 
     A candidate's span runs to the next candidate; table-of-contents lines and inline
-    cross-references have short spans and are discarded. Normally the longest span wins.
-    When table rows are included, the table of contents itself can produce long spans,
-    so the last qualifying occurrence (the body heading, after the TOC) wins instead.
+    cross-references have short spans and are discarded.
+
+    Default: walk the items in 10-K order and take, for each, the first qualifying heading
+    after the previous item's heading. This skips a table of contents (it precedes Item 1's
+    body heading) and running page headers such as "PART II Item 7" repeated on every page
+    (the first one is the real heading).
+
+    With table rows included, the table of contents itself can produce long spans, so the
+    last qualifying occurrence (the body heading, after the TOC) wins instead.
     """
-    best: dict[str, tuple[int, str, int]] = {}
-    for i, (start, item, title) in enumerate(candidates):
-        length = (candidates[i + 1][0] if i + 1 < len(candidates) else text_len) - start
-        if length < MIN_SECTION_CHARS:
-            continue
-        if item not in best or prefer_last or length > best[item][2]:
-            best[item] = (start, title, length)
-    return {item: (start, title) for item, (start, title, _) in best.items()}
+    spans = [s for s in _spans(candidates, text_len) if s[3] >= MIN_SECTION_CHARS]
+    if prefer_last:
+        return {item: (start, title) for start, item, title, _ in spans}
+    chosen: dict[str, tuple[int, str]] = {}
+    floor = -1
+    for item in ITEM_ORDER:
+        hit = next(
+            ((start, title) for start, it, title, _ in spans if it == item and start > floor), None
+        )
+        if hit:
+            chosen[item] = hit
+            floor = hit[0]
+    return chosen
 
 
 def _title_fallback(text: str, chosen: dict[str, tuple[int, str]]) -> dict[str, tuple[int, str]]:
