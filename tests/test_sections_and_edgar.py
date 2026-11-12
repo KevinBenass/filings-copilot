@@ -173,3 +173,30 @@ def test_financial_section_appended_at_end():
     assert text[by_item["7"].start :].startswith("MANAGEMENT’S DISCUSSION")
     assert text[by_item["8"].start :].startswith("REPORT OF INDEPENDENT")
     assert by_item["8"].end == len(text)
+
+
+def test_running_page_headers_do_not_move_sections():
+    """Microsoft-style: 'PART II Item 7' repeats at the top of every MD&A page."""
+    page = FILLER  # one page of text, > 400 chars
+    text = "\n".join(
+        [
+            "Item 1. Business",
+            page,
+            "Item 7. Management's Discussion and Analysis",
+            page,
+            "Item 7",
+            page,  # running header, page 2
+            "Item 7",
+            page + page,  # running header, page 3 (the longest span)
+            "Item 7A. Quantitative and Qualitative Disclosures About Market Risk",
+            page,
+            "Item 8. Financial Statements and Supplementary Data",
+            page,
+            "Item 8",
+            page + page + page,
+        ]
+    )
+    by_item = {s.item: s for s in find_sections(text)}
+    assert text[by_item["7"].start :].startswith("Item 7. Management's")
+    assert by_item["7"].end == text.index("Item 7A.")
+    assert text[by_item["8"].start :].startswith("Item 8. Financial")

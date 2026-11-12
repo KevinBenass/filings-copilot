@@ -75,7 +75,7 @@ def parse() -> None:
     parse_corpus(s.resolve(s.corpus.raw_dir), s.resolve(s.corpus.parsed_dir))
     docs = load_parsed(s.resolve(s.corpus.parsed_dir))
     # Key sections with their size; a tiny one is a pointer stub, not the real section.
-    key = {"7": ("MD&A", 20_000), "7A": ("Mkt risk", 3_000), "8": ("Financials", 50_000)}
+    key = {"7": ("MD&A", 10_000), "7A": ("Mkt risk", 2_000), "8": ("Financials", 50_000)}
     table = Table("doc", "chars", "sections", *(name for name, _ in key.values()))
     warnings = 0
     for d in docs:
