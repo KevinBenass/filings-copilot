@@ -102,10 +102,12 @@ class LLM:
 
         key = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
         if self._db is not None:
-            row = self._db.execute("SELECT value FROM cache WHERE key = ?", (key,)).fetchone()
-            if row:
-                with self._lock:
+            # One SQLite connection is shared by worker threads; all access goes through the lock.
+            with self._lock:
+                row = self._db.execute("SELECT value FROM cache WHERE key = ?", (key,)).fetchone()
+                if row:
                     self.total.cache_hits += 1
+            if row:
                 return LLMResponse(text=json.loads(row[0])["text"], cached=True)
 
         resp = self.client.messages.create(**request)

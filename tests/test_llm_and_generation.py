@@ -130,3 +130,15 @@ def test_requests_match_installed_sdk_signature(settings):
     generate_answer("q", passages(), llm)
     for request in fake.calls:
         assert set(request) <= accepted, set(request) - accepted
+
+
+def test_disk_cache_is_thread_safe(settings, tmp_path):
+    """Contextualization calls the LLM from many threads sharing one SQLite cache."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    llm = LLM(settings.llm, tmp_path / "cache.sqlite", client=FakeAnthropic(lambda req: "ok"))
+    prompts = [f"q{i % 50}" for i in range(2000)]  # repeats exercise reads and writes together
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        texts = list(pool.map(lambda p: llm.complete(p, model="claude-haiku-5-5").text, prompts))
+    assert texts == ["ok"] * len(prompts)
+    assert llm.total.calls + llm.total.cache_hits == len(prompts)
