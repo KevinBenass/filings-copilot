@@ -11,6 +11,7 @@ import pandas as pd
 from filings_copilot.config import ROOT
 
 START, END = "<!-- RESULTS:START -->", "<!-- RESULTS:END -->"
+CORPUS_START, CORPUS_END = "<!-- CORPUS:START -->", "<!-- CORPUS:END -->"
 
 
 def _fmt(df: pd.DataFrame) -> pd.DataFrame:
@@ -147,3 +148,48 @@ def build_report(results_dir: Path, readme: Path | None = None) -> str:
             )
             readme.write_text(new)
     return body
+
+
+def _replace_block(path: Path, start: str, end: str, body: str) -> None:
+    if not path.exists():
+        return
+    text = path.read_text()
+    if start in text and end in text:
+        new = re.sub(
+            re.escape(start) + r".*?" + re.escape(end),
+            lambda _: f"{start}\n{body}\n{end}",
+            text,
+            flags=re.DOTALL,
+        )
+        path.write_text(new)
+
+
+def write_corpus_table(docs, results_dir: Path, readme: Path | None = None) -> Path:
+    """One row per company: the filings in the corpus (linked to EDGAR) and their size."""
+    by_company: dict[str, list] = {}
+    for d in docs:
+        by_company.setdefault(d.meta.ticker, []).append(d)
+    rows = []
+    for ticker, ds in sorted(by_company.items()):
+        ds = sorted(ds, key=lambda d: d.meta.fiscal_year)
+        rows.append(
+            {
+                "Company": ds[0].meta.company,
+                "Ticker": ticker,
+                "10-K filings": " · ".join(f"[FY{d.meta.fiscal_year}]({d.meta.url})" for d in ds),
+                "Fiscal year ends": ds[-1].meta.period_of_report[5:],
+                "Text per filing": f"{sum(len(d.text) for d in ds) / len(ds) / 1e3:,.0f}k chars",
+                "Sections found": f"{min(len(d.sections) for d in ds) - 1}–{max(len(d.sections) for d in ds) - 1}",
+            }
+        )
+    total_chars = sum(len(d.text) for d in docs)
+    body = (
+        f"{len(docs)} annual reports from {len(by_company)} companies, "
+        f"{total_chars / 1e6:.1f}M characters of text (≈{total_chars / 4 / 1e6:.1f}M tokens).\n\n"
+        + pd.DataFrame(rows).to_markdown(index=False, disable_numparse=True)
+    )
+    results_dir.mkdir(parents=True, exist_ok=True)
+    path = results_dir / "corpus.md"
+    path.write_text("# Corpus\n\n" + body + "\n")
+    _replace_block(readme or ROOT / "README.md", CORPUS_START, CORPUS_END, body)
+    return path

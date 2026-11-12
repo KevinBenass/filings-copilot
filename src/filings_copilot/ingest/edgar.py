@@ -18,6 +18,7 @@ from filings_copilot.schemas import FilingMeta
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
+SUBMISSIONS_PAGE_URL = "https://data.sec.gov/submissions/{name}"
 ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc}/{doc}"
 
 
@@ -57,33 +58,50 @@ class EdgarClient:
             for row in data.values()
         }
 
+    def _submission_pages(self, cik: str, min_year: int) -> Iterator[dict]:
+        """Yield columnar filing tables: the recent page, then older pages as needed.
+
+        The "recent" page holds at most ~1,000 filings. Prolific filers (banks issuing
+        structured notes) push their older 10-Ks onto the paginated history files.
+        """
+        data = self.get(SUBMISSIONS_URL.format(cik=cik)).json()
+        yield data["filings"]["recent"]
+        for page in data["filings"].get("files", []):
+            if page.get("filingTo", "9999")[:4] < str(min_year):
+                break
+            yield self.get(SUBMISSIONS_PAGE_URL.format(name=page["name"])).json()
+
     def annual_filings(
         self, ticker: str, cik: str, company: str, form: str, fiscal_years: list[int]
     ) -> Iterator[FilingMeta]:
-        recent = self.get(SUBMISSIONS_URL.format(cik=cik)).json()["filings"]["recent"]
         seen: set[int] = set()
-        for i, f in enumerate(recent["form"]):
-            if f != form:
-                continue
-            period = recent["reportDate"][i]
-            fy = fiscal_year_from_period(period)
-            if fy not in fiscal_years or fy in seen:
-                continue
-            seen.add(fy)
-            acc = recent["accessionNumber"][i]
-            yield FilingMeta(
-                ticker=ticker,
-                company=company,
-                cik=cik,
-                form=form,
-                fiscal_year=fy,
-                period_of_report=period,
-                filing_date=recent["filingDate"][i],
-                accession=acc,
-                url=ARCHIVE_URL.format(
-                    cik_int=int(cik), acc=acc.replace("-", ""), doc=recent["primaryDocument"][i]
-                ),
-            )
+        for table in self._submission_pages(cik, min(fiscal_years)):
+            for i, f in enumerate(table["form"]):
+                if f != form:
+                    continue
+                period = table["reportDate"][i]
+                if not period:
+                    continue
+                fy = fiscal_year_from_period(period)
+                if fy not in fiscal_years or fy in seen:
+                    continue
+                seen.add(fy)
+                acc = table["accessionNumber"][i]
+                yield FilingMeta(
+                    ticker=ticker,
+                    company=company,
+                    cik=cik,
+                    form=form,
+                    fiscal_year=fy,
+                    period_of_report=period,
+                    filing_date=table["filingDate"][i],
+                    accession=acc,
+                    url=ARCHIVE_URL.format(
+                        cik_int=int(cik), acc=acc.replace("-", ""), doc=table["primaryDocument"][i]
+                    ),
+                )
+            if seen >= set(fiscal_years):
+                return
 
 
 def fiscal_year_from_period(period_of_report: str) -> int:
@@ -97,16 +115,22 @@ def fiscal_year_from_period(period_of_report: str) -> int:
 
 def download_corpus(
     tickers: list[str], form: str, fiscal_years: list[int], user_agent: str, raw_dir: Path
-) -> list[Path]:
-    """Download filings as raw HTML with a sidecar metadata JSON. Idempotent."""
+) -> tuple[list[Path], dict[str, list[int]]]:
+    """Download filings as raw HTML with a sidecar metadata JSON. Idempotent.
+
+    Returns the written paths and, per ticker, the fiscal years that could not be found.
+    """
     raw_dir.mkdir(parents=True, exist_ok=True)
     client = EdgarClient(user_agent)
     tmap = client.ticker_map()
     written: list[Path] = []
+    missing: dict[str, list[int]] = {}
     for ticker in tickers:
         if ticker not in tmap:
-            raise KeyError(f"Ticker {ticker} not found in SEC ticker map")
+            missing[ticker] = list(fiscal_years)
+            continue
         cik, company = tmap[ticker]
+        found: set[int] = set()
         for meta in client.annual_filings(ticker, cik, company, form, fiscal_years):
             html_path = raw_dir / f"{meta.doc_id}.html"
             meta_path = raw_dir / f"{meta.doc_id}.json"
@@ -114,4 +138,7 @@ def download_corpus(
                 html_path.write_bytes(client.get(meta.url).content)
             meta_path.write_text(json.dumps(meta.model_dump(), indent=2))
             written.append(html_path)
-    return written
+            found.add(meta.fiscal_year)
+        if gaps := sorted(set(fiscal_years) - found):
+            missing[ticker] = gaps
+    return written, missing
