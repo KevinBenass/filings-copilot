@@ -51,7 +51,7 @@ def download() -> None:
     from filings_copilot.ingest.edgar import download_corpus
 
     s = load_settings()
-    paths = download_corpus(
+    paths, missing = download_corpus(
         s.corpus.tickers,
         s.corpus.form,
         s.corpus.fiscal_years,
@@ -59,19 +59,55 @@ def download() -> None:
         s.resolve(s.corpus.raw_dir),
     )
     console.print(f"[green]{len(paths)} filings in {s.corpus.raw_dir}")
+    for ticker, years in missing.items():
+        console.print(f"[yellow]Not found: {ticker} fiscal years {', '.join(map(str, years))}")
 
 
 @app.command()
 def parse() -> None:
-    """Parse raw HTML filings into text, tables and sections."""
-    from filings_copilot.ingest.parse import load_parsed, parse_corpus
+    """Parse raw HTML filings into text, tables and sections; write the corpus table."""
+    from filings_copilot.eval.report import write_corpus_table
+    from filings_copilot.ingest.parse import ITEM_TITLES, load_parsed, parse_corpus
 
     s = load_settings()
     parse_corpus(s.resolve(s.corpus.raw_dir), s.resolve(s.corpus.parsed_dir))
-    table = Table("doc", "chars", "sections")
-    for d in load_parsed(s.resolve(s.corpus.parsed_dir)):
-        table.add_row(d.meta.doc_id, f"{len(d.text):,}", " ".join(sec.item for sec in d.sections))
+    docs = load_parsed(s.resolve(s.corpus.parsed_dir))
+    key = {"7": "MD&A", "7A": "Mkt risk", "8": "Financials"}
+    table = Table("doc", "chars", "sections", *key.values())
+    for d in docs:
+        items = {sec.item for sec in d.sections}
+        table.add_row(
+            d.meta.doc_id,
+            f"{len(d.text):,}",
+            " ".join(sec.item for sec in d.sections),
+            *("✓" if k in items else "[red]✗" for k in key),
+        )
     console.print(table)
+    unknown = sorted({sec.item for d in docs for sec in d.sections} - set(ITEM_TITLES) - {"0"})
+    if unknown:
+        console.print(f"[yellow]Unrecognized items: {unknown}")
+    path = write_corpus_table(docs, s.resolve(s.eval.results_dir))
+    console.print(f"[green]Corpus table -> {path} and README")
+
+
+@app.command()
+def inspect(
+    doc_id: str,
+    pattern: Annotated[
+        str, typer.Argument(help="Regex, e.g. 'item\\s*7' or 'discussion and analysis'")
+    ] = r"item\s*7",
+) -> None:
+    """Show how a filing's text looks around a pattern (for debugging section detection)."""
+    from filings_copilot.ingest.parse import ParsedFiling, section_report
+
+    s = load_settings()
+    path = s.resolve(s.corpus.parsed_dir) / f"{doc_id}.json"
+    doc = ParsedFiling.model_validate_json(path.read_text())
+    console.print(
+        f"{doc_id}: {len(doc.text):,} chars, sections {[sec.item for sec in doc.sections]}"
+    )
+    for line in section_report(doc.text, pattern):
+        console.print(line, markup=False, highlight=False)
 
 
 @app.command()
