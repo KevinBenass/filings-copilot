@@ -22,11 +22,19 @@ class Embedder(Protocol):
 
 
 class SentenceTransformerEmbedder:
-    def __init__(self, model_name: str, query_instruction: str = "", batch_size: int = 32) -> None:
+    def __init__(
+        self,
+        model_name: str,
+        query_instruction: str = "",
+        batch_size: int = 32,
+        device: str = "auto",
+    ) -> None:
         from sentence_transformers import SentenceTransformer  # optional heavy dependency
 
         self.name = model_name
-        self._model = SentenceTransformer(model_name)
+        from filings_copilot.index.device import pick_device
+
+        self._model = SentenceTransformer(model_name, device=pick_device(device))
         self._instruction = query_instruction
         self._batch_size = batch_size
 

@@ -68,3 +68,24 @@ def test_rerank_ranks_recorded(corpus_chunks):
     hits = make_retriever(corpus_chunks).retrieve("export controls China revenue risk")
     assert all("rerank" in h.ranks and "fused" in h.ranks for h in hits)
     assert "Export controls" in hits[0].chunk.text
+
+
+def test_pick_device_avoids_mps_on_intel_macs(monkeypatch):
+    import sys
+    import types
+
+    from filings_copilot.index import device
+
+    fake = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: False),
+        backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: True)),
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake)
+    monkeypatch.setattr(device.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(device.platform, "machine", lambda: "x86_64")
+    assert (
+        device.pick_device() == "cpu"
+    )  # Intel Mac: MPS exists but is slower and runs out of memory
+    monkeypatch.setattr(device.platform, "machine", lambda: "arm64")
+    assert device.pick_device() == "mps"  # Apple Silicon
+    assert device.pick_device("cpu") == "cpu"  # explicit setting wins

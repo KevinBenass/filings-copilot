@@ -13,11 +13,15 @@ class Reranker(Protocol):
 
 
 class CrossEncoderReranker:
-    def __init__(self, model_name: str, max_length: int = 512, batch_size: int = 16) -> None:
+    def __init__(
+        self, model_name: str, max_length: int = 512, batch_size: int = 16, device: str = "auto"
+    ) -> None:
         from sentence_transformers import CrossEncoder  # optional heavy dependency
 
         self.name = model_name
-        self._model = CrossEncoder(model_name, max_length=max_length)
+        from filings_copilot.index.device import pick_device
+
+        self._model = CrossEncoder(model_name, max_length=max_length, device=pick_device(device))
         self._batch_size = batch_size
 
     def score(self, query: str, passages: list[str]) -> list[float]:
