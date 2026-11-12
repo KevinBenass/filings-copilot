@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from pathlib import Path
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag, XMLParsedAsHTMLWarning
 
 from filings_copilot.schemas import FilingMeta, ParsedFiling, Section
 
@@ -59,10 +60,15 @@ INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\ufeff\u2060"), None)
 # For those, sections are located by their conventional titles instead.
 TITLE_FALLBACK: dict[str, list[str]] = {
     "7": ["management's discussion and analysis", "management’s discussion and analysis"],
-    "7A": ["market risk management", "quantitative and qualitative disclosures about market risk"],
+    "7A": [
+        "market risk management",
+        "quantitative and qualitative disclosures about market risk",
+        "market risks",
+    ],
     "8": [
         "report of independent registered public accounting firm",
         "consolidated statements of income",
+        "consolidated statement of income",
         "consolidated financial statements",
     ],
 }
@@ -116,7 +122,10 @@ def _is_hidden(tag: Tag) -> bool:
 
 
 def html_to_text(html: str) -> str:
-    soup = BeautifulSoup(html, "lxml")
+    with warnings.catch_warnings():
+        # Some filings are XHTML with an XML declaration; the HTML parser handles them fine.
+        warnings.simplefilter("ignore", XMLParsedAsHTMLWarning)
+        soup = BeautifulSoup(html, "lxml")
     for t in soup(["script", "style", "head", "title"]):
         t.decompose()
     for t in soup.find_all(
@@ -192,36 +201,41 @@ def _pick(
 
 
 def _title_fallback(text: str, chosen: dict[str, tuple[int, str]]) -> dict[str, tuple[int, str]]:
-    """Fill missing MD&A / market risk / financial statements by their usual titles.
+    """Locate MD&A / market risk / financial statements by their usual titles.
 
-    Only short, heading-like lines outside tables count, and only the first occurrence
-    (later ones are running page headers). Order is enforced: 7 < 7A < 8.
+    Covers two layouts where "Item 7." is not a usable heading:
+    - annual-report-style 10-Ks (large banks) that map items through a cross-reference index;
+    - 10-Ks whose Items 7, 7A and 8 are one-line pointers to a "Financial Section" appended at
+      the end. There MD&A is found after the other items, so 7A and 8 are re-located after it
+      too, replacing the pointer stubs.
+    Only short, heading-like lines outside tables count, and only the first occurrence after
+    the previous item (later ones are running page headers). Order is enforced: 7 < 7A < 8.
     """
     out = dict(chosen)
-    line_starts: list[tuple[int, str]] = []
+    lines: list[tuple[int, str]] = []
     offset = 0
     for line in text.splitlines(keepends=True):
         stripped = line.strip()
         if stripped and not stripped.startswith("|") and len(stripped) <= 90:
-            line_starts.append((offset, stripped.lower().rstrip(".:")))
+            lines.append((offset, stripped.lower().replace("’", "'").rstrip(".:")))
         offset += len(line)
     floor = 0
     for item in ("7", "7A", "8"):
+        current = out.get(item)
+        if current is None or current[0] < floor:
+            titles = TITLE_FALLBACK[item]
+            hit = next(
+                (
+                    pos
+                    for pos, low in lines
+                    if pos > floor and any(low.startswith(t) for t in titles)
+                ),
+                None,
+            )
+            if hit is not None:
+                out[item] = (hit, "")
         if item in out:
-            floor = out[item][0]
-            continue
-        titles = TITLE_FALLBACK[item]
-        hit = next(
-            (
-                pos
-                for pos, low in line_starts
-                if pos > floor and any(low.startswith(t) for t in titles)
-            ),
-            None,
-        )
-        if hit is not None:
-            out[item] = (hit, "")
-            floor = hit
+            floor = max(floor, out[item][0])
     return out
 
 

@@ -73,17 +73,29 @@ def parse() -> None:
     s = load_settings()
     parse_corpus(s.resolve(s.corpus.raw_dir), s.resolve(s.corpus.parsed_dir))
     docs = load_parsed(s.resolve(s.corpus.parsed_dir))
-    key = {"7": "MD&A", "7A": "Mkt risk", "8": "Financials"}
-    table = Table("doc", "chars", "sections", *key.values())
+    # Key sections with their size; a tiny one is a pointer stub, not the real section.
+    key = {"7": ("MD&A", 20_000), "7A": ("Mkt risk", 3_000), "8": ("Financials", 50_000)}
+    table = Table("doc", "chars", "sections", *(name for name, _ in key.values()))
+    warnings = 0
     for d in docs:
-        items = {sec.item for sec in d.sections}
+        sizes = {sec.item: sec.end - sec.start for sec in d.sections}
+        cells = []
+        for item, (_, minimum) in key.items():
+            size = sizes.get(item)
+            if size is None:
+                cells.append("[red]missing")
+                warnings += 1
+            elif size < minimum:
+                cells.append(f"[yellow]{size / 1e3:.0f}k ⚠")
+                warnings += 1
+            else:
+                cells.append(f"{size / 1e3:.0f}k")
         table.add_row(
-            d.meta.doc_id,
-            f"{len(d.text):,}",
-            " ".join(sec.item for sec in d.sections),
-            *("✓" if k in items else "[red]✗" for k in key),
+            d.meta.doc_id, f"{len(d.text):,}", " ".join(sec.item for sec in d.sections), *cells
         )
     console.print(table)
+    if warnings:
+        console.print(f"[yellow]{warnings} key section(s) missing or suspiciously small (⚠).")
     unknown = sorted({sec.item for d in docs for sec in d.sections} - set(ITEM_TITLES) - {"0"})
     if unknown:
         console.print(f"[yellow]Unrecognized items: {unknown}")
