@@ -8,6 +8,10 @@ corpus:
   # resolved through the SEC ticker list.
   ciks: {AAPL: "0000320193", MSFT: "0000789019", NVDA: "0001045810", AMZN: "0001018724",
          GOOGL: "0001652044", JPM: "0000019617", JNJ: "0000200406", XOM: "0000034088"}
+  # Display names used in chunk headers, citations and the README (SEC names are often upper case).
+  names: {AAPL: "Apple Inc.", MSFT: "Microsoft Corporation", NVDA: "NVIDIA Corporation",
+          AMZN: "Amazon.com, Inc.", GOOGL: "Alphabet Inc.", JPM: "JPMorgan Chase & Co.",
+          JNJ: "Johnson & Johnson", XOM: "Exxon Mobil Corporation"}
   form: "10-K"
   fiscal_years: [2023, 2024, 2025]
   # SEC asks automated clients to identify themselves. Override with env SEC_USER_AGENT.

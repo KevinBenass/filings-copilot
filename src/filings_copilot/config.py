@@ -17,6 +17,7 @@ DEFAULT_CONFIG = ROOT / "configs" / "default.yaml"
 class CorpusConfig(BaseModel):
     tickers: list[str]
     ciks: dict[str, str] = Field(default_factory=dict)
+    names: dict[str, str] = Field(default_factory=dict)
     form: str = "10-K"
     fiscal_years: list[int]
     user_agent: str = "filings-copilot research"
