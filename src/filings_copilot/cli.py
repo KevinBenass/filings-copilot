@@ -179,33 +179,72 @@ def gen_gold() -> None:
 
 
 @app.command()
-def review(start: int = 0) -> None:
-    """Human review loop for the gold set: accept, edit or drop each question."""
-    from filings_copilot.eval.dataset import load_gold, save_gold
+def review(
+    sample: Annotated[
+        int, typer.Option(help="Review a stratified random sample of N questions (0 = all)")
+    ] = 50,
+) -> None:
+    """Human review of the gold set: accept, edit or drop questions. Resumable.
+
+    Reviewing a stratified random sample (default 50) is the practical standard; the outcome
+    is recorded in data/eval/review.json and reported alongside the results.
+    """
+    import json
+
+    from filings_copilot.eval.dataset import load_gold, save_gold, stratified_sample
 
     s = load_settings()
     path = s.resolve(s.eval.gold_path)
+    stats_path = path.parent / "review.json"
     gold = load_gold(path)
-    kept = gold[:start]
-    for i, q in enumerate(gold[start:], start):
-        console.rule(f"{i + 1}/{len(gold)}  {q.qid}  [{q.qtype}]")
+    if stats_path.exists():
+        stats = json.loads(stats_path.read_text())
+    else:
+        chosen = stratified_sample(gold, sample, s.eval.seed) if sample else [q.qid for q in gold]
+        stats = {
+            "total_before_review": len(gold),
+            "sample": chosen,
+            "accepted": [],
+            "edited": [],
+            "dropped": [],
+        }
+    done = set(stats["accepted"]) | set(stats["edited"]) | set(stats["dropped"])
+    todo = [qid for qid in stats["sample"] if qid not in done]
+    by_id = {q.qid: q for q in gold}
+
+    def save() -> None:
+        save_gold([q for q in by_id.values() if q.qid not in stats["dropped"]], path)
+        stats_path.write_text(json.dumps(stats, indent=2))
+
+    for n, qid in enumerate(todo, len(done) + 1):
+        q = by_id[qid]
+        console.rule(f"{n}/{len(stats['sample'])}  {q.qid}  [{q.qtype}]")
         console.print(f"[bold]Q:[/] {q.question}\n[bold]A:[/] {q.answer}")
         for ev in q.evidence:
             console.print(f"[dim]{ev.doc_id}:[/] {ev.quote}")
+        console.print(
+            "[dim]Accept if a reasonable analyst could ask it, the answer is right, and the quote supports it."
+        )
         choice = typer.prompt("[a]ccept / [e]dit / [d]rop / [q]uit", default="a")
         if choice == "q":
-            kept += gold[i:]
             break
         if choice == "d":
-            continue
-        if choice == "e":
+            stats["dropped"].append(qid)
+        elif choice == "e":
             q.question = typer.prompt("Question", default=q.question)
             q.answer = typer.prompt("Answer", default=q.answer)
-        q.verified = True
-        kept.append(q)
-        save_gold(kept + gold[i + 1 :], path)  # save progress after every item
-    save_gold(kept, path)
-    console.print(f"[green]{sum(q.verified for q in kept)}/{len(kept)} verified")
+            q.verified = True
+            stats["edited"].append(qid)
+        else:
+            q.verified = True
+            stats["accepted"].append(qid)
+        save()  # progress is saved after every question
+    save()
+    reviewed = len(stats["accepted"]) + len(stats["edited"]) + len(stats["dropped"])
+    console.print(
+        f"[green]Reviewed {reviewed}/{len(stats['sample'])}: {len(stats['accepted'])} accepted, "
+        f"{len(stats['edited'])} edited, {len(stats['dropped'])} dropped"
+    )
 
 
 @app.command("eval-retrieval")

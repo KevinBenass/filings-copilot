@@ -82,8 +82,48 @@ def generation_table(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def eval_set_summary(gold_path: Path) -> list[str]:
+    """Composition of the gold set, its lexical leakage, and the human review outcome."""
+    from filings_copilot.eval.dataset import leakage_ratio, load_gold
+
+    if not gold_path.exists():
+        return []
+    gold = load_gold(gold_path)
+    counts = pd.Series([q.qtype for q in gold]).value_counts()
+    leak = [leakage_ratio(q.question, q.evidence[0].quote) for q in gold if q.evidence]
+    lines = [
+        "### Evaluation set",
+        f"{len(gold)} questions: "
+        + ", ".join(
+            f"{counts.get(t, 0)} {t.replace('_', '-')}"
+            for t in ("single_hop", "table", "multi_hop", "unanswerable")
+        )
+        + ". Each answerable question is tied to a verbatim evidence span in a filing.",
+    ]
+    review_path = gold_path.parent / "review.json"
+    if review_path.exists():
+        r = json.loads(review_path.read_text())
+        reviewed = len(r["accepted"]) + len(r["edited"]) + len(r["dropped"])
+        if reviewed:
+            lines.append(
+                f"A stratified random sample of {reviewed} questions was reviewed by hand: "
+                f"{len(r['accepted'])} accepted as generated, {len(r['edited'])} corrected, "
+                f"{len(r['dropped'])} removed ({len(r['accepted']) / reviewed:.0%} usable without changes)."
+            )
+    if leak:
+        lines.append(
+            f"Lexical leakage: on average {sum(leak) / len(leak):.0%} of an evidence quote's content words "
+            'also appear in its question. Some overlap is inherent (a question about "data center revenue" '
+            "must say so), but it favors keyword search, so BM25's scores here are likely optimistic."
+        )
+    return [*lines, ""]
+
+
 def build_report(results_dir: Path, readme: Path | None = None) -> str:
-    parts: list[str] = []
+    from filings_copilot.config import load_settings
+
+    s = load_settings()
+    parts: list[str] = eval_set_summary(s.resolve(s.eval.gold_path))
     abl_path = results_dir / "retrieval_ablation.csv"
     if abl_path.exists():
         abl = pd.read_csv(abl_path)

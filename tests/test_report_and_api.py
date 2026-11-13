@@ -109,3 +109,71 @@ def test_api_retrieve(monkeypatch):
     resp = TestClient(api.app).post("/retrieve", json={"question": "what?"})
     assert resp.status_code == 200
     assert resp.json()["passages"][0]["ticker"] == "ACME"
+
+
+def _gold(n_single=40, n_table=12, n_multi=8, n_un=6):
+    from filings_copilot.schemas import Evidence, GoldQuestion
+
+    out = []
+    for qtype, n in [
+        ("single_hop", n_single),
+        ("table", n_table),
+        ("multi_hop", n_multi),
+        ("unanswerable", n_un),
+    ]:
+        for i in range(n):
+            ev = (
+                []
+                if qtype == "unanswerable"
+                else [Evidence(doc_id="D", start=0, end=5, quote="revenue grew strongly")]
+            )
+            out.append(
+                GoldQuestion(
+                    qid=f"{qtype}-{i}",
+                    question=f"How did revenue change {i}?",
+                    answer="a",
+                    qtype=qtype,
+                    evidence=ev,
+                )
+            )
+    return out
+
+
+def test_stratified_sample_covers_every_type():
+    from filings_copilot.eval.dataset import stratified_sample
+
+    gold = _gold()
+    ids = stratified_sample(gold, 20, seed=1)
+    types = {q.qtype for q in gold if q.qid in set(ids)}
+    assert types == {"single_hop", "table", "multi_hop", "unanswerable"}
+    assert len(ids) == len(set(ids)) == 20
+    assert ids == stratified_sample(gold, 20, seed=1)  # reproducible
+
+
+def test_review_is_resumable_and_reported(tmp_path, monkeypatch):
+    import filings_copilot.cli as cli
+    from filings_copilot.config import load_settings
+    from filings_copilot.eval.dataset import load_gold, save_gold
+    from filings_copilot.eval.report import eval_set_summary
+
+    gold_path = tmp_path / "eval" / "gold.jsonl"
+    save_gold(_gold(), gold_path)
+    settings = load_settings(overrides={"eval.gold_path": str(gold_path)})
+    monkeypatch.setattr(cli, "load_settings", lambda: settings)
+    runner = CliRunner()
+
+    # First session: accept, drop, then quit.
+    out = runner.invoke(cli_app, ["review", "--sample", "10"], input="a\nd\nq\n").output
+    assert "Reviewed 2/" in out
+    # Second session resumes where it stopped and edits the next question.
+    out = runner.invoke(cli_app, ["review"], input="e\nBetter question?\nBetter answer\nq\n").output
+    assert "Reviewed 3/" in out and "1 accepted, 1 edited, 1 dropped" in out
+
+    gold = load_gold(gold_path)
+    assert len(gold) == len(_gold()) - 1
+    assert sum(q.verified for q in gold) == 2 and any(
+        q.question == "Better question?" for q in gold
+    )
+    summary = "\n".join(eval_set_summary(gold_path))
+    assert "65 questions" in summary and "3 questions was reviewed" in summary
+    assert "Lexical leakage" in summary

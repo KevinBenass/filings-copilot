@@ -344,3 +344,27 @@ def leakage_ratio(question: str, quote: str) -> float:
     words = lambda s: {w for w in re.findall(r"[a-z]{4,}", s.lower())}  # noqa: E731
     q, e = words(question), words(quote)
     return len(q & e) / len(e) if e else 0.0
+
+
+def stratified_sample(
+    gold: list[GoldQuestion], n: int, seed: int, min_per_type: int = 5
+) -> list[str]:
+    """Question ids for review: proportional to each type's share, at least ``min_per_type``."""
+    rng = random.Random(seed)
+    by_type: dict[str, list[str]] = {}
+    for q in gold:
+        by_type.setdefault(q.qtype, []).append(q.qid)
+    quota = {
+        t: min(len(qids), max(min_per_type, round(n * len(qids) / len(gold))))
+        for t, qids in by_type.items()
+    }
+    while sum(quota.values()) > n:  # minimums can overshoot: trim the largest group
+        largest = max(quota, key=quota.get)
+        if quota[largest] <= min_per_type:
+            break
+        quota[largest] -= 1
+    chosen: list[str] = []
+    for t, qids in by_type.items():
+        chosen += rng.sample(qids, quota[t])
+    rng.shuffle(chosen)
+    return chosen

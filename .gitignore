@@ -17,3 +17,4 @@ data/*
 data/eval/*
 !data/eval/gold.jsonl
 !data/eval/README.md
+!data/eval/review.json
