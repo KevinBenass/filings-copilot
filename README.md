@@ -8,6 +8,19 @@ Most RAG demos stop at "it answers questions." This project is built around the 
 
 [![ci](https://github.com/KevinBenass/filings-copilot/actions/workflows/ci.yml/badge.svg)](https://github.com/KevinBenass/filings-copilot/actions/workflows/ci.yml)
 
+## Example
+
+```bash
+uv run fcopilot ask "How did NVIDIA's data center revenue change in fiscal 2025, and what drove it?"
+```
+
+> NVIDIA's Data Center revenue for fiscal year 2025 was $115,186 million, compared with $47,525 million in fiscal 2024 and $15,005 million in fiscal 2023 **[6]**. The filing states that Data Center revenue was up 142% from a year ago **[3]**. Computing from the table, ($115,186 − $47,525) / $47,525 is about 142.4%, which matches the stated figure **[6]**. The increase is $67,661 million, calculated as $115,186 million minus $47,525 million **[6]**. Within Data Center, Compute revenue rose to $102,196 million from $38,950 million, and Networking rose to $12,990 million from $8,575 million **[6]**. The filing attributes the growth to demand for the Hopper architecture accelerated computing platform, used for large language models, recommendation engines, and generative AI applications **[3]**. NVIDIA also began shipping production systems of the Blackwell architecture in the fourth quarter of fiscal year 2025 **[3]**. In the segment discussion, Data Center computing revenue grew 162%, driven primarily by Hopper demand, and Data Center networking revenue grew 51%, driven by Ethernet for AI revenue, including the Spectrum-X end-to-end ethernet platform **[1]**. Data Center was also the main driver of the higher gross margin, which rose to 75.0% in fiscal 2025 from 72.7% in fiscal 2024 on a higher mix of Data Center revenue **[2]**.
+>
+> **[1] [2] [3]** NVIDIA Corporation FY2025, Item 7. Management's Discussion and Analysis
+> **[6]** NVIDIA Corporation FY2025, Item 8. Financial Statements and Supplementary Data
+
+Every figure is cited, the stated growth rate is cross-checked against the underlying table, and the explanation comes from management's own discussion. Retrieval filtered to NVIDIA's FY2025 report from the question alone; the reranker moved the segment discussion **[1]**, ranked only 3rd and 4th by the two search methods, to the top.
+
 ## Architecture
 
 ```mermaid
