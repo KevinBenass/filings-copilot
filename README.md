@@ -21,6 +21,18 @@ uv run fcopilot ask "How did NVIDIA's data center revenue change in fiscal 2025,
 
 Every figure is cited, the stated growth rate is cross-checked against the underlying table, and the explanation comes from management's own discussion. Retrieval filtered to NVIDIA's FY2025 report from the question alone; the reranker moved the segment discussion **[1]**, ranked only 3rd and 4th by the two search methods, to the top.
 
+**When the filings don't contain the answer, it says so instead of inventing one.** Apple reports revenue by product and by region, but never iPhone revenue *in* a region:
+
+```bash
+uv run fcopilot ask "What was Apple's iPhone revenue in Greater China in fiscal 2025?"
+```
+
+> The passages do not give iPhone revenue for Greater China in fiscal 2025. They report Greater China total net sales of $64,377 million for 2025, down 4% from $66,952 million in 2024 **[3][6]**. They say the decrease was primarily due to lower iPhone net sales, partially offset by higher Mac net sales **[1]**. They also say iPhone represented a moderately higher proportion of net sales in Greater China **[2]**. However, no dollar figure or percentage for Greater China iPhone revenue is provided.
+>
+> *8.1 s · $0.015*
+
+It answers what the filing does disclose and states plainly what it doesn't. This behavior is measured systematically, not just shown once: the evaluation set includes 30 plausible questions the filings cannot answer, and the [results](#results) report how often the system correctly abstains.
+
 ## Architecture
 
 ```mermaid
