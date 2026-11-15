@@ -21,6 +21,7 @@ Evaluated on 280 answerable questions. Δ CI is a paired bootstrap 95% interval 
 | + rerank           | 0.762      | 0.893       | 0.544 | 0.616     | 0.361   | [-0.087, +0.004]   | 3033     |
 | + filters          | 0.802      | 0.912       | 0.630 | 0.686     | 0.457   | [+0.014, +0.068]   | 2969     |
 | + decomposition    | 0.814      | 0.930       | 0.632 | 0.694     | 0.464   | [-0.004, +0.029]   | 4955     |
+| full − rerank      | 0.818      | 0.887       | 0.675 | 0.717     | 0.554   | [-0.039, +0.046]   | 1759     |
 
 Recall@5 by question type:
 
@@ -35,14 +36,15 @@ Recall@5 by question type:
 | + rerank           | 0.512                 | 0.817                  | 0.767             |
 | + filters          | 0.562                 | 0.861                  | 0.783             |
 | + decomposition    | 0.675                 | 0.856                  | 0.783             |
+| full − rerank      | 0.625                 | 0.856                  | 0.833             |
 
 ### End-to-end answer quality
-Answer model `claude-sonnet-5-5`, judge `claude-haiku-5-5`, 310 questions, total eval cost $6.91.
+Retrieval configuration `full − rerank` (the best Recall@5 in the ablation), answer model `claude-sonnet-5-5`, judge `claude-haiku-5-5`, 310 questions, total eval cost $6.81. Correctness, faithfulness and citation precision are averaged over graded answers; abstentions on answerable questions count as incorrect.
 
-| question type                     | n   | correctness   | faithfulness   | citation precision   | false abstention   |
-|:----------------------------------|:----|:--------------|:---------------|:---------------------|:-------------------|
-| multi_hop                         | 40  | 0.304         | 0.958          | 1.000                | 0.375              |
-| single_hop                        | 180 | 0.952         | 0.997          | 0.996                | 0.033              |
-| table                             | 60  | 0.936         | 0.996          | 1.000                | 0.033              |
-| **all answerable**                | 280 | 0.876         | 0.995          | 0.997                | 0.082              |
-| unanswerable (correct abstention) | 30  | 1.000         |                |                      |                    |
+| question type                     | n   | graded   | correctness   | faithfulness   | citation precision   | false abstention   |
+|:----------------------------------|:----|:---------|:--------------|:---------------|:---------------------|:-------------------|
+| multi_hop                         | 40  | 40       | 0.637         | 1.000          | 1.000                | 0.300              |
+| single_hop                        | 180 | 180      | 0.925         | 0.982          | 0.995                | 0.044              |
+| table                             | 60  | 60       | 0.925         | 0.990          | 0.997                | 0.017              |
+| **all answerable**                | 280 | 280      | 0.884         | 0.986          | 0.996                | 0.075              |
+| unanswerable (correct abstention) | 30  | 30       | 1.000         |                |                      |                    |
