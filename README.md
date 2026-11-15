@@ -218,6 +218,10 @@ tests/         unit tests with a synthetic 10-K and stand-in models (no network,
 - **Corpus size.** 24 filings is enough to separate the techniques, not to claim production scale. The exact dense index would be swapped for an ANN index (HNSW) beyond a few hundred thousand chunks.
 - **Numbers from tables** are read by the LLM, not computed. A natural extension is routing quantitative questions to the structured XBRL data, which the multi-agent project does.
 
+## How this was built
+
+Designed and evaluated by me; implemented with Claude Code. Every result in this README was produced on my machine, and I reviewed the outputs and made the evaluation and design decisions.
+
 ## License
 
 MIT. SEC filings are public domain.
