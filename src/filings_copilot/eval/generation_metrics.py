@@ -37,34 +37,33 @@ Tasks:
    passages above support it. Keep each claim short (at most 12 words); cover every claim.
 3. citation_support: for each cited passage id, does that passage support at least one claim?
 
-Submit your grades with the submit_grade tool."""
+Reply in the required JSON format."""
 
-JUDGE_TOOL = {
-    "name": "submit_grade",
-    "description": "Submit the grades for the system answer.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "correctness": {"type": "number", "enum": [0, 0.5, 1]},
-            "claims": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {"claim": {"type": "string"}, "supported": {"type": "boolean"}},
-                    "required": ["claim", "supported"],
-                },
-            },
-            "citation_support": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {"passage": {"type": "integer"}, "supports": {"type": "boolean"}},
-                    "required": ["passage", "supports"],
-                },
+JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "correctness": {"type": "number", "enum": [0, 0.5, 1]},
+        "claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"claim": {"type": "string"}, "supported": {"type": "boolean"}},
+                "required": ["claim", "supported"],
+                "additionalProperties": False,
             },
         },
-        "required": ["correctness", "claims", "citation_support"],
+        "citation_support": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"passage": {"type": "integer"}, "supports": {"type": "boolean"}},
+                "required": ["passage", "supports"],
+                "additionalProperties": False,
+            },
+        },
     },
+    "required": ["correctness", "claims", "citation_support"],
+    "additionalProperties": False,
 }
 
 
@@ -88,8 +87,8 @@ def judge(gold: GoldQuestion, answer: Answer, llm: LLM) -> dict[str, float | Non
     # JSON is still cut off. Failures are recorded, never silently dropped from averages.
     for max_tokens in (3000, 8000):
         try:
-            out, _ = llm.complete_tool(
-                prompt, JUDGE_TOOL, model=llm.cfg.judge_model, max_tokens=max_tokens
+            out, _ = llm.complete_structured(
+                prompt, JUDGE_SCHEMA, model=llm.cfg.judge_model, max_tokens=max_tokens
             )
             break
         except ValueError:

@@ -335,7 +335,7 @@ def test_eval_generation_and_report_end_to_end(tmp_path, monkeypatch):
         )
 
     def reply(req):
-        if req["tool_choice"]["name"] == "submit_answer":
+        if "answerable" in req["output_config"]["format"]["schema"]["properties"]:
             unans = "dividend" in req["messages"][0]["content"][-1]["text"]
             return {
                 "answerable": not unans,

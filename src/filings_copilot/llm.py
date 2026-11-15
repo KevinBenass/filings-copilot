@@ -164,31 +164,28 @@ class LLM:
         )
         return LLMResponse(text=value.get("text", ""), usage=usage or Usage(), cached=usage is None)
 
-    def complete_tool(
+    def complete_structured(
         self,
         prompt: str,
-        tool: dict[str, Any],
+        schema: dict[str, Any],
         *,
         model: str | None = None,
         system: str | None = None,
         max_tokens: int | None = None,
     ) -> tuple[dict[str, Any], Usage]:
-        """Structured output: force a call to ``tool`` and return its validated input.
+        """Structured output: the API constrains the reply to ``schema`` (output_config.format).
 
-        Raises ValueError if the output was cut off by ``max_tokens`` or no tool call came back,
-        so callers can retry with more room instead of scoring a truncated result.
+        Works on every model, unlike forcing a tool call. Raises ValueError if the reply was
+        cut off by ``max_tokens`` or refused, so callers can retry instead of scoring it.
         """
         request = self._base_request(prompt, model, system, None, max_tokens)
-        request["tools"] = [tool]
-        request["tool_choice"] = {"type": "tool", "name": tool["name"]}
+        request["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
         value, usage = self._send(request)
-        if value.get("stop_reason") == "max_tokens" or not isinstance(
-            value.get("tool_input"), dict
-        ):
+        if value.get("stop_reason") in ("max_tokens", "refusal"):
             raise ValueError(
-                f"{tool['name']}: no complete tool call (stop_reason={value.get('stop_reason')})"
+                f"structured output incomplete (stop_reason={value.get('stop_reason')})"
             )
-        return value["tool_input"], usage or Usage()
+        return json.loads(value.get("text") or "null") or {}, usage or Usage()
 
     def complete_json(self, prompt: str, **kwargs: Any) -> Any:
         return parse_json(self.complete(prompt, **kwargs).text)

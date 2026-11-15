@@ -17,23 +17,20 @@ filings. Rules:
   something (growth rate, ratio), show the inputs and cite them.
 - If the passages do not contain the information needed, set "answerable" to false and say
   briefly what is missing. A partial answer is fine if you state what is missing.
-Submit your answer with the submit_answer tool."""
+Reply in the required JSON format."""
 
-ANSWER_TOOL = {
-    "name": "submit_answer",
-    "description": "Submit the answer to the question.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "answerable": {
-                "type": "boolean",
-                "description": "false if the passages do not contain the information needed",
-            },
-            "answer": {"type": "string", "description": "The answer, citing passages like [2]."},
-            "citations": {"type": "array", "items": {"type": "integer"}},
+ANSWER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answerable": {
+            "type": "boolean",
+            "description": "false if the passages do not contain the information needed",
         },
-        "required": ["answerable", "answer", "citations"],
+        "answer": {"type": "string", "description": "The answer, citing passages like [2]."},
+        "citations": {"type": "array", "items": {"type": "integer"}},
     },
+    "required": ["answerable", "answer", "citations"],
+    "additionalProperties": False,
 }
 
 
@@ -53,13 +50,13 @@ def generate_answer(question: str, passages: list[RetrievedChunk], llm: LLM) -> 
     prompt = f"{format_passages(passages)}\n\nQuestion: {question}"
     data: dict = {}
     cost = 0.0
-    # Structured output via a forced tool call: no free-text JSON to parse. Retry once with
+    # Structured output constrained by a JSON schema: no free-text JSON to parse. Retry once with
     # more room if a long answer is cut off.
     for max_tokens in (2048, 4096):
         try:
-            data, usage = llm.complete_tool(
+            data, usage = llm.complete_structured(
                 prompt,
-                ANSWER_TOOL,
+                ANSWER_SCHEMA,
                 model=llm.cfg.answer_model,
                 system=SYSTEM,
                 max_tokens=max_tokens,

@@ -233,7 +233,45 @@ def test_answer_via_tool_and_citation_markers(settings):
     llm = LLM(settings.llm, None, client=FakeAnthropic(lambda req: reply))
     ans = generate_answer("What happened?", passages(), llm)
     assert ans.citations == [1, 3]  # listed + markers in the text
-    assert llm.client.calls[0]["tool_choice"] == {"type": "tool", "name": "submit_answer"}
+    request = llm.client.calls[0]
+    assert request["output_config"]["format"]["type"] == "json_schema"
+    assert "tool_choice" not in request  # forced tool calls are unsupported on some models
+
+
+def test_structured_output_schemas_respect_api_limits():
+    """The structured-output API rejects schemas whose objects allow extra properties or use
+    numeric/string/array constraints. Checked here so the API never returns a 400 for it."""
+    from filings_copilot.eval.generation_metrics import JUDGE_SCHEMA
+    from filings_copilot.generate.answer import ANSWER_SCHEMA
+
+    unsupported = {
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "minLength",
+        "maxLength",
+        "maxItems",
+        "uniqueItems",
+        "patternProperties",
+    }
+
+    def walk(node, path="$"):
+        if isinstance(node, dict):
+            assert not unsupported & set(node), f"{path}: {unsupported & set(node)}"
+            if node.get("type") == "object":
+                assert node.get("additionalProperties") is False, f"{path}: must be false"
+            if "minItems" in node:
+                assert node["minItems"] in (0, 1), path
+            for k, v in node.items():
+                walk(v, f"{path}.{k}")
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, f"{path}[{i}]")
+
+    for schema in (ANSWER_SCHEMA, JUDGE_SCHEMA):
+        walk(schema)
 
 
 def test_answer_retries_when_cut_off(settings):
