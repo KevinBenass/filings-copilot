@@ -368,3 +368,52 @@ def stratified_sample(
         chosen += rng.sample(qids, quota[t])
     rng.shuffle(chosen)
     return chosen
+
+
+def evidence_context(
+    text: str, start: int, end: int, header_lines: int = 6, prose_chars: int = 250
+) -> list[tuple[str, bool]]:
+    """What a reviewer needs to judge an evidence span, as (line, is_evidence) pairs.
+
+    For a table row, the row alone hides which column is which year, so the table's
+    caption and first header rows are included. For prose, the surrounding sentences.
+    """
+    block_start = text.rfind("\n\n", 0, start)
+    block_start = 0 if block_start == -1 else block_start + 2
+    block_end = text.find("\n\n", end)
+    block_end = len(text) if block_end == -1 else block_end
+    lines = text[block_start:block_end].split("\n")
+    if sum(ln.lstrip().startswith("|") for ln in lines) < 2:
+        lo, hi = max(0, start - prose_chars), min(len(text), end + prose_chars)
+        return [
+            (("…" if lo else "") + text[lo:start], False),
+            (text[start:end], True),
+            (text[end:hi] + ("…" if hi < len(text) else ""), False),
+        ]
+
+    out: list[tuple[str, bool]] = []
+    caption_end = block_start - 2
+    caption_start = text.rfind("\n\n", 0, max(0, caption_end))
+    caption = text[(0 if caption_start == -1 else caption_start + 2) : max(0, caption_end)].strip()
+    if caption and (len(caption) < 300 or caption.endswith(":")):
+        out.append((caption[-300:], False))
+    offset = block_start
+    shown_header = 0
+    gap = False
+    for line in lines:
+        line_start, line_end = offset, offset + len(line)
+        offset = line_end + 1
+        if set(line.strip()) <= {"|", "-", " "}:
+            continue  # separator or empty layout row
+        is_evidence = line_end > start and line_start < end
+        if is_evidence:
+            if gap:
+                out.append(("  …", False))
+                gap = False
+            out.append((line, True))
+        elif shown_header < header_lines and line_start < start:
+            out.append((line, False))
+            shown_header += 1
+        elif line_start < start:
+            gap = True
+    return out

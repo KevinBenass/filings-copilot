@@ -191,7 +191,15 @@ def review(
     """
     import json
 
-    from filings_copilot.eval.dataset import load_gold, save_gold, stratified_sample
+    from rich.text import Text
+
+    from filings_copilot.eval.dataset import (
+        evidence_context,
+        load_gold,
+        save_gold,
+        stratified_sample,
+    )
+    from filings_copilot.ingest.parse import load_parsed
 
     s = load_settings()
     path = s.resolve(s.eval.gold_path)
@@ -211,6 +219,8 @@ def review(
     done = set(stats["accepted"]) | set(stats["edited"]) | set(stats["dropped"])
     todo = [qid for qid in stats["sample"] if qid not in done]
     by_id = {q.qid: q for q in gold}
+    parsed_dir = s.resolve(s.corpus.parsed_dir)
+    docs = {d.meta.doc_id: d for d in load_parsed(parsed_dir)} if parsed_dir.exists() else {}
 
     def save() -> None:
         save_gold([q for q in by_id.values() if q.qid not in stats["dropped"]], path)
@@ -221,9 +231,15 @@ def review(
         console.rule(f"{n}/{len(stats['sample'])}  {q.qid}  [{q.qtype}]")
         console.print(f"[bold]Q:[/] {q.question}\n[bold]A:[/] {q.answer}")
         for ev in q.evidence:
-            console.print(f"[dim]{ev.doc_id}:[/] {ev.quote}")
+            console.print(f"[dim]{ev.doc_id}[/]")
+            doc = docs.get(ev.doc_id)
+            if doc is None:
+                console.print(ev.quote, markup=False)
+                continue
+            for line, is_evidence in evidence_context(doc.text, ev.start, ev.end):
+                console.print(Text(line, style="bold yellow" if is_evidence else "dim"))
         console.print(
-            "[dim]Accept if a reasonable analyst could ask it, the answer is right, and the quote supports it."
+            "[dim]Accept if a reasonable analyst could ask it, the answer is right, and the highlighted evidence supports it."
         )
         choice = typer.prompt("[a]ccept / [e]dit / [d]rop / [q]uit", default="a")
         if choice == "q":

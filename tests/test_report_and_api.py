@@ -177,3 +177,30 @@ def test_review_is_resumable_and_reported(tmp_path, monkeypatch):
     summary = "\n".join(eval_set_summary(gold_path))
     assert "65 questions" in summary and "3 questions was reviewed" in summary
     assert "Lexical leakage" in summary
+
+
+def test_evidence_context_shows_table_headers():
+    from filings_copilot.eval.dataset import evidence_context, locate
+
+    text = (
+        "Intro paragraph.\n\nThe following table summarizes revenue by market (in millions):\n\n"
+        "|  |  |  |\n|---|---|---|\n|  | Jan 26, 2025 | Jan 28, 2024 |\n|  |  |  |\n"
+        "| Gaming | $11,350 | $10,447 |\n| Data Center | $115,186 | $47,525 |\n\nNext paragraph."
+    )
+    start, end = locate(text, "Data Center | $115,186 | $47,525")
+    ctx = evidence_context(text, start, end)
+    shown = [line for line, _ in ctx]
+    assert shown[0].startswith("The following table summarizes revenue")
+    assert "|  | Jan 26, 2025 | Jan 28, 2024 |" in shown  # the year header is visible
+    assert [line for line, ev in ctx if ev] == ["| Data Center | $115,186 | $47,525 |"]
+    assert not any(set(line.strip()) <= {"|", "-", " "} for line in shown)  # layout rows hidden
+
+
+def test_evidence_context_prose_highlights_quote():
+    from filings_copilot.eval.dataset import evidence_context
+
+    text = "A" * 300 + " Revenue grew 12% due to volume. " + "B" * 300
+    s = text.index("Revenue")
+    ctx = evidence_context(text, s, s + len("Revenue grew 12% due to volume."))
+    assert [line for line, ev in ctx if ev] == ["Revenue grew 12% due to volume."]
+    assert ctx[0][0].startswith("…") and ctx[-1][0].endswith("…")
