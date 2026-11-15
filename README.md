@@ -19,7 +19,7 @@ uv run fcopilot ask "How did NVIDIA's data center revenue change in fiscal 2025,
 > **[1] [2] [3]** NVIDIA Corporation FY2025, Item 7. Management's Discussion and Analysis
 > **[6]** NVIDIA Corporation FY2025, Item 8. Financial Statements and Supplementary Data
 
-Every figure is cited, the stated growth rate is cross-checked against the underlying table, and the explanation comes from management's own discussion. Retrieval filtered to NVIDIA's FY2025 report from the question alone; the reranker moved the segment discussion **[1]**, ranked only 3rd and 4th by the two search methods, to the top.
+Every figure is cited, the stated growth rate is cross-checked against the underlying table, and the explanation comes from management's own discussion. Retrieval filtered to NVIDIA's FY2025 report from the question alone, and the table and the narrative were both found because each chunk carries a header saying whose filing, which year and which section it comes from.
 
 **When the filings don't contain the answer, it says so instead of inventing one.** Apple reports revenue by product and by region, but never iPhone revenue *in* a region:
 
@@ -48,8 +48,9 @@ flowchart LR
         Q[Question] --> P[Query planner<br/>ticker/year filters<br/>+ decomposition]
         P --> E & F
         E & F --> R[Reciprocal rank fusion]
-        R --> X[Cross-encoder reranker<br/>MiniLM-L6]
-        X --> G[Claude Sonnet<br/>cited answer or abstain]
+        R --> G[Claude Sonnet<br/>cited answer or abstain]
+        R -. optional, off by default .-> X[Cross-encoder reranker<br/>MiniLM-L6]
+        X -.-> G
     end
     G --> O[Answer + citations<br/>FastAPI · Streamlit · CLI]
 ```
@@ -64,7 +65,7 @@ flowchart LR
 | Dense | `BAAI/bge-small-en-v1.5`, exact inner-product search | 12k chunks fit in memory; exact search is a few ms and has perfect recall. Model sized to run on a laptop CPU (see below) |
 | Fusion | Reciprocal rank fusion (k=60) | Uses ranks only, so BM25 and cosine scores never need calibrating |
 | Filters | Rule-based ticker/year extraction; hard ticker filter, soft year filter (Y and Y+1) | A FY2023 figure is often best found in the FY2024 report's comparison table |
-| Rerank | Cross-encoder (`ms-marco-MiniLM-L-6-v2`) over the top 30 | Reads query and passage jointly; usually the biggest single precision gain in a RAG system |
+| Rerank | Cross-encoder (`ms-marco-MiniLM-L-6-v2`) over the top 30, **off by default** | Usually a large precision gain, but this CPU-sized model *lowered* Recall@5 and Hit@1 here and added ~1.5 s per query, so the ablation turned it off (see [results](#what-the-ablation-shows)) |
 | Generation | Claude Sonnet, JSON output, mandatory `[n]` citations, abstain path | Every claim is traceable; "not in the filings" is a valid answer |
 
 ## Corpus
@@ -148,6 +149,17 @@ Retrieval configuration `full − rerank` (the best Recall@5 in the ablation), a
 | unanswerable (correct abstention) | 30  | 30       | 1.000         |                |                      |                    |
 <!-- RESULTS:END -->
 
+### What the ablation shows
+
+- **Context beats architecture.** The largest gains come from telling each chunk where it sits: a `company · FY · section` header (+0.19 Recall@5) and an LLM-written situating sentence (+0.09). Switching from BM25 to hybrid search alone made things *worse*, likely because the small dense model can't tell one company's "revenue increased" from another's.
+- **The reranker was turned off because the measurement said so.** A small cross-encoder sized for a laptop CPU lowered Recall@5 (0.804 → 0.762) and Hit@1, and cost 3 s per query. The final row removes it from the full pipeline: Recall@5 0.818, Hit@1 0.554 (best of all rows), at 1.8 s instead of 5.0 s. The shipped configuration is picked automatically from this table (`best_config()`), so the API and app always use the measured winner. A larger reranker on a GPU might change the verdict, and testing that is a one-line config change.
+- **Decomposition is what fixes multi-hop retrieval.** Splitting "compare A and B" into one search per company raises multi-hop Recall@5 from 0.56 to 0.68; it does nothing for single-passage questions, as expected.
+- **The generator is faithful and cautious.** 98.6% of claims are supported by the retrieved passages and 99.6% of citations support what they're cited for. All 30 unanswerable questions were correctly declined. On multi-hop questions it declines 30% of the time, typically when one of the two companies' figures is missing from the passages; when it does answer, it is right about 91% of the time (0.64 correctness ÷ 0.70 answered).
+
+### How the evaluation was debugged
+
+The first full run reported multi-hop correctness of 0.30. Before trusting it, I checked how many answers had actually been graded: over a quarter of the judge's replies had been cut off at the token limit and silently dropped, mostly long multi-hop answers. The fix was schema-constrained structured outputs for both the answer and the judge, retries with more room, and a `graded` column so a dropped grade can never hide in an average again. Every row above now shows graded = n.
+
 ## Quickstart
 
 Requires Python 3.11+, [uv](https://docs.astral.sh/uv/), and an Anthropic API key for the generative steps.
@@ -199,8 +211,10 @@ tests/         unit tests with a synthetic 10-K and stand-in models (no network,
 ## Limitations and next steps
 
 - **LLM-as-judge.** Generation metrics come from an LLM grader. It runs on a different model tier than the generator, and a sample is checked by hand, but it is not a substitute for expert labels.
+- **Multi-hop answers abstain too often** (30%). Retrieval returns 5–8 passages; a comparison needs both companies' figures in them. Next steps: retrieve a fixed quota per sub-question, or let the generator ask for a second search.
+- **Lexical leakage.** Questions share 46% of their content words with their evidence, which flatters BM25. The relative ordering of the later steps is what matters; absolute BM25 scores are likely optimistic.
 - **Synthetic questions** skew toward what is easy to ask about a single passage. Multi-hop and unanswerable questions are included to counter this, and the review step removes unnatural ones.
-- **Model sizes are chosen for a laptop CPU.** The full pipeline, including four embedding variants for the ablation and reranking every evaluation query, runs on an Intel MacBook with no GPU. A larger embedder (`bge-large-en-v1.5`) and reranker (`bge-reranker-v2-m3`) are one config change away on a GPU and would likely lift absolute scores; the ablation measures relative gains, which this setup captures.
+- **Model sizes are chosen for a laptop CPU.** The full pipeline, including four embedding variants for the ablation and a reranker in the ablation, runs on an Intel MacBook with no GPU. A larger embedder (`bge-large-en-v1.5`) and reranker (`bge-reranker-v2-m3`) are one config change away on a GPU and would likely lift absolute scores; the ablation measures relative gains, which this setup captures.
 - **Corpus size.** 24 filings is enough to separate the techniques, not to claim production scale. The exact dense index would be swapped for an ANN index (HNSW) beyond a few hundred thousand chunks.
 - **Numbers from tables** are read by the LLM, not computed. A natural extension is routing quantitative questions to the structured XBRL data, which the multi-agent project does.
 
