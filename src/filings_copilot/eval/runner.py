@@ -51,7 +51,14 @@ def ensure_chunks(settings: Settings, allow_llm_cost: bool) -> None:
 
 
 def run_retrieval(settings: Settings, gold: list[GoldQuestion]) -> pd.DataFrame:
-    retriever = build_retriever(settings)
+    # Latency is part of the result, so LLM steps (query decomposition) really call the API
+    # here instead of answering from the local cache.
+    llm = (
+        LLM(settings.llm, settings.resolve(settings.llm.cache_path), read_cache=False)
+        if settings.retrieval.decompose
+        else None
+    )
+    retriever = build_retriever(settings, llm)
     rows = []
     for q in track([g for g in gold if g.qtype != "unanswerable"], description="Retrieving"):
         t0 = time.perf_counter()
@@ -122,7 +129,14 @@ def run_generation(
 ) -> pd.DataFrame:
     llm = LLM(settings.llm, settings.resolve(settings.llm.cache_path))
     retriever = build_retriever(settings, llm)
-    items = gold[:limit] if limit else gold
+    if limit:
+        # A small stratified sample across question types: a cheap smoke test before a full run.
+        from filings_copilot.eval.dataset import stratified_sample
+
+        keep = set(stratified_sample(gold, limit, settings.eval.seed, min_per_type=2))
+        items = [q for q in gold if q.qid in keep]
+    else:
+        items = gold
     # Retrieval runs serially (models are not thread-safe); generation and judging in parallel.
     retrieved = [
         (q, retriever.retrieve(q.question)) for q in track(items, description="Retrieving")

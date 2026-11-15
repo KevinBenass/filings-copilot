@@ -37,10 +37,35 @@ Tasks:
    passages above support it. Keep each claim short (at most 12 words); cover every claim.
 3. citation_support: for each cited passage id, does that passage support at least one claim?
 
-Respond with JSON only:
-{{"correctness": 0|0.5|1,
-  "claims": [{{"claim": "...", "supported": true|false}}],
-  "citation_support": {{"<passage id>": true|false}}}}"""
+Submit your grades with the submit_grade tool."""
+
+JUDGE_TOOL = {
+    "name": "submit_grade",
+    "description": "Submit the grades for the system answer.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "correctness": {"type": "number", "enum": [0, 0.5, 1]},
+            "claims": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"claim": {"type": "string"}, "supported": {"type": "boolean"}},
+                    "required": ["claim", "supported"],
+                },
+            },
+            "citation_support": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"passage": {"type": "integer"}, "supports": {"type": "boolean"}},
+                    "required": ["passage", "supports"],
+                },
+            },
+        },
+        "required": ["correctness", "claims", "citation_support"],
+    },
+}
 
 
 def judge(gold: GoldQuestion, answer: Answer, llm: LLM) -> dict[str, float | None]:
@@ -63,7 +88,9 @@ def judge(gold: GoldQuestion, answer: Answer, llm: LLM) -> dict[str, float | Non
     # JSON is still cut off. Failures are recorded, never silently dropped from averages.
     for max_tokens in (3000, 8000):
         try:
-            out = llm.complete_json(prompt, model=llm.cfg.judge_model, max_tokens=max_tokens)
+            out, _ = llm.complete_tool(
+                prompt, JUDGE_TOOL, model=llm.cfg.judge_model, max_tokens=max_tokens
+            )
             break
         except ValueError:
             continue
@@ -77,7 +104,13 @@ def judge(gold: GoldQuestion, answer: Answer, llm: LLM) -> dict[str, float | Non
         }
     row["judge_failed"] = 0.0
     claims = out.get("claims") or []
-    support = out.get("citation_support") or {}
+    raw_support = out.get("citation_support") or []
+    if isinstance(raw_support, dict):  # tolerate {"<id>": bool} as well as the schema's list
+        support = {str(k): v for k, v in raw_support.items()}
+    else:
+        support = {
+            str(c.get("passage")): c.get("supports") for c in raw_support if isinstance(c, dict)
+        }
     row["correctness"] = float(out.get("correctness", 0))
     row["faithfulness"] = mean(bool(c.get("supported")) for c in claims) if claims else None
     row["citation_precision"] = (

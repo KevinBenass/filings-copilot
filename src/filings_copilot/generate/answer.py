@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import time
 
-from filings_copilot.llm import LLM, parse_json
+from filings_copilot.llm import LLM
 from filings_copilot.retrieve.pipeline import Retriever
 from filings_copilot.schemas import Answer, RetrievedChunk
 
@@ -16,8 +17,24 @@ filings. Rules:
   something (growth rate, ratio), show the inputs and cite them.
 - If the passages do not contain the information needed, set "answerable" to false and say
   briefly what is missing. A partial answer is fine if you state what is missing.
-Respond with JSON only:
-{"answerable": true|false, "answer": "...", "citations": [1, 3]}"""
+Submit your answer with the submit_answer tool."""
+
+ANSWER_TOOL = {
+    "name": "submit_answer",
+    "description": "Submit the answer to the question.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "answerable": {
+                "type": "boolean",
+                "description": "false if the passages do not contain the information needed",
+            },
+            "answer": {"type": "string", "description": "The answer, citing passages like [2]."},
+            "citations": {"type": "array", "items": {"type": "integer"}},
+        },
+        "required": ["answerable", "answer", "citations"],
+    },
+}
 
 
 def format_passages(passages: list[RetrievedChunk]) -> str:
@@ -34,14 +51,31 @@ def format_passages(passages: list[RetrievedChunk]) -> str:
 def generate_answer(question: str, passages: list[RetrievedChunk], llm: LLM) -> Answer:
     t0 = time.perf_counter()
     prompt = f"{format_passages(passages)}\n\nQuestion: {question}"
-    resp = llm.complete(prompt, model=llm.cfg.answer_model, system=SYSTEM)
-    try:
-        data = parse_json(resp.text)
-        answer = str(data.get("answer", "")).strip()
-        answerable = bool(data.get("answerable", True))
-        cites = [int(c) for c in data.get("citations", []) if str(c).isdigit()]
-    except (ValueError, AttributeError):
-        answer, answerable, cites = resp.text.strip(), True, []
+    data: dict = {}
+    cost = 0.0
+    # Structured output via a forced tool call: no free-text JSON to parse. Retry once with
+    # more room if a long answer is cut off.
+    for max_tokens in (2048, 4096):
+        try:
+            data, usage = llm.complete_tool(
+                prompt,
+                ANSWER_TOOL,
+                model=llm.cfg.answer_model,
+                system=SYSTEM,
+                max_tokens=max_tokens,
+            )
+            cost += usage.cost_usd
+            break
+        except ValueError:
+            continue
+    answer = str(data.get("answer", "")).strip() or "(no answer generated)"
+    answerable = bool(data.get("answerable", True))
+    listed = [str(c).strip("[] ") for c in data.get("citations", [])]
+    # Citations are what the model listed plus any [n] markers in the text, so a forgotten
+    # list entry doesn't count against an answer whose sentences are cited.
+    cites = [int(c) for c in listed if c.isdigit()] + [
+        int(n) for n in re.findall(r"\[(\d+)\]", answer)
+    ]
     cites = sorted({c for c in cites if 1 <= c <= len(passages)})
     return Answer(
         question=question,
@@ -50,7 +84,7 @@ def generate_answer(question: str, passages: list[RetrievedChunk], llm: LLM) -> 
         citations=cites,
         passages=passages,
         latency_ms=(time.perf_counter() - t0) * 1e3,
-        cost_usd=resp.usage.cost_usd,
+        cost_usd=cost,
     )
 
 

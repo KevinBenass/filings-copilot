@@ -293,3 +293,90 @@ def test_ablation_reuses_saved_steps(tmp_path, monkeypatch):
     assert len(computed) == 2 and list(table["config"]) == ["a", "b"]
     runner.run_ablation(gold, force=["b"])
     assert len(computed) == 3
+
+
+def test_eval_generation_and_report_end_to_end(tmp_path, monkeypatch):
+    """The exact path `make eval` runs after retrieval: generation, judging, report."""
+    import sys
+
+    sys.path.insert(0, "tests")
+    from conftest import FakeAnthropic, HashEmbedder, OverlapReranker, meta, mini_10k_html
+
+    import filings_copilot.eval.runner as runner
+    from filings_copilot.config import ChunkingConfig, load_settings
+    from filings_copilot.eval.dataset import locate
+    from filings_copilot.eval.report import build_report
+    from filings_copilot.index.dense import DenseIndex
+    from filings_copilot.ingest.chunking import chunk_document
+    from filings_copilot.ingest.parse import parse_filing
+    from filings_copilot.llm import LLM
+    from filings_copilot.retrieve.pipeline import Retriever
+    from filings_copilot.schemas import Evidence, GoldQuestion
+
+    doc = parse_filing(mini_10k_html(), meta())
+    chunks = chunk_document(doc, ChunkingConfig(max_tokens=120))
+    settings = load_settings(
+        overrides={
+            "eval.results_dir": str(tmp_path / "results"),
+            "llm.cache_path": str(tmp_path / "c.sqlite"),
+            "retrieval.top_k": 4,
+        }
+    )
+    emb = HashEmbedder()
+
+    def fake_build(s, llm=None):
+        return Retriever(
+            s,
+            chunks,
+            DenseIndex.build(emb, [c.index_text for c in chunks]),
+            emb,
+            OverlapReranker(),
+            llm,
+        )
+
+    def reply(req):
+        if req["tool_choice"]["name"] == "submit_answer":
+            unans = "dividend" in req["messages"][0]["content"][-1]["text"]
+            return {
+                "answerable": not unans,
+                "answer": "Not disclosed."
+                if unans
+                else "Data Center revenue was $60,922 million [1].",
+                "citations": [] if unans else [1],
+            }
+        return {
+            "correctness": 1,
+            "claims": [{"claim": "x", "supported": True}],
+            "citation_support": [{"passage": 1, "supports": True}],
+        }
+
+    fake = FakeAnthropic(reply)
+    monkeypatch.setattr(runner, "build_retriever", fake_build)
+    monkeypatch.setattr(
+        runner, "LLM", lambda cfg, path=None, **kw: LLM(cfg, path, client=fake, **kw)
+    )
+    s, e = locate(doc.text, "Data Center | $60,922 | $47,525")
+    gold = [
+        GoldQuestion(
+            qid="t1",
+            question="What was Acme data center revenue in fiscal 2025?",
+            answer="$60,922 million",
+            qtype="table",
+            evidence=[Evidence(doc_id=doc.meta.doc_id, start=s, end=e)],
+        ),
+        GoldQuestion(
+            qid="u1",
+            question="What dividend will Acme pay in 2030?",
+            answer="(not in filings)",
+            qtype="unanswerable",
+        ),
+    ]
+    df = runner.run_generation(settings, gold, config_name="full − rerank")
+    assert set(df["qid"]) == {"t1", "u1"}
+    assert df.set_index("qid").loc["t1", "judge_failed"] == 0.0
+
+    readme = tmp_path / "README.md"
+    readme.write_text("<!-- RESULTS:START -->\n<!-- RESULTS:END -->\n")
+    body = build_report(tmp_path / "results", readme)
+    assert "`full − rerank`" in body and "graded" in body
+    assert "unanswerable (correct abstention)" in body

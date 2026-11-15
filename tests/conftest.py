@@ -101,7 +101,11 @@ class OverlapReranker:
 
 
 class FakeAnthropic:
-    """Mimics anthropic.Anthropic().messages.create with a scripted reply function."""
+    """Mimics anthropic.Anthropic().messages.create with a scripted reply function.
+
+    For forced tool calls, a reply that parses as JSON (or a dict) becomes the tool input;
+    a reply that doesn't parse simulates output cut off at max_tokens.
+    """
 
     def __init__(self, reply):
         self.calls = []
@@ -109,12 +113,24 @@ class FakeAnthropic:
         self._reply = reply
 
     def _create(self, **request):
+        import json
+
         self.calls.append(request)
-        text = self._reply(request)
+        out = self._reply(request)
         usage = SimpleNamespace(
             input_tokens=1000,
             output_tokens=100,
             cache_read_input_tokens=0,
             cache_creation_input_tokens=0,
         )
-        return SimpleNamespace(content=[SimpleNamespace(text=text)], usage=usage)
+        if "tool_choice" in request:
+            name = request["tool_choice"]["name"]
+            try:
+                tool_input = out if isinstance(out, dict) else json.loads(out)
+            except ValueError:
+                return SimpleNamespace(content=[], usage=usage, stop_reason="max_tokens")
+            block = SimpleNamespace(type="tool_use", name=name, input=tool_input, id="tu_1")
+            return SimpleNamespace(content=[block], usage=usage, stop_reason="tool_use")
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=out)], usage=usage, stop_reason="end_turn"
+        )

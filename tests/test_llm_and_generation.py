@@ -70,7 +70,10 @@ def test_judge_scores(settings):
         {
             "correctness": 0.5,
             "claims": [{"claim": "a", "supported": True}, {"claim": "b", "supported": False}],
-            "citation_support": {"1": True, "2": False},
+            "citation_support": [
+                {"passage": 1, "supports": True},
+                {"passage": 2, "supports": False},
+            ],
         }
     )
     llm = LLM(settings.llm, None, client=FakeAnthropic(lambda req: reply))
@@ -151,7 +154,7 @@ def test_judge_retries_cut_off_output_and_records_failures(settings):
         {
             "correctness": 1,
             "claims": [{"claim": "a", "supported": True}],
-            "citation_support": {"1": True},
+            "citation_support": [{"passage": 1, "supports": True}],
         }
     )
     calls = []
@@ -171,3 +174,78 @@ def test_judge_retries_cut_off_output_and_records_failures(settings):
     always_cut = LLM(settings.llm, None, client=FakeAnthropic(lambda req: full[:40]))
     row = judge(gold, ans, always_cut)
     assert row["judge_failed"] == 1.0 and row["correctness"] is None
+
+
+def test_text_request_cache_keys_are_unchanged(settings, tmp_path):
+    """The local cache holds paid-for work (chunk contexts, decompositions). Its keys must
+    stay identical to the format used when that work was done, or it would be paid again."""
+    import hashlib
+    import sqlite3
+
+    llm = LLM(settings.llm, tmp_path / "c.sqlite", client=FakeAnthropic(lambda req: "ok"))
+    llm.complete(
+        "PROMPT", model="claude-haiku-5-5", system="SYS", cached_prefix="DOC", max_tokens=150
+    )
+    original_format = {
+        "model": "claude-haiku-5-5",
+        "max_tokens": 150,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "DOC", "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": "PROMPT"},
+                ],
+            }
+        ],
+        "system": "SYS",
+    }
+    key = hashlib.sha256(json.dumps(original_format, sort_keys=True).encode()).hexdigest()
+    keys = [r[0] for r in sqlite3.connect(tmp_path / "c.sqlite").execute("SELECT key FROM cache")]
+    assert keys == [key]
+    # Entries written before tool support stored only {"text": ...}; they must still load.
+    llm2 = LLM(
+        settings.llm,
+        tmp_path / "c.sqlite",
+        client=FakeAnthropic(lambda req: pytest.fail("cache miss")),
+    )
+    assert (
+        llm2.complete(
+            "PROMPT", model="claude-haiku-5-5", system="SYS", cached_prefix="DOC", max_tokens=150
+        ).text
+        == "ok"
+    )
+
+
+def test_read_cache_false_calls_api_but_keeps_writing(settings, tmp_path):
+    fake = FakeAnthropic(lambda req: "ok")
+    LLM(settings.llm, tmp_path / "c.sqlite", client=fake).complete("q")
+    LLM(settings.llm, tmp_path / "c.sqlite", client=fake, read_cache=False).complete("q")
+    assert len(fake.calls) == 2
+
+
+def test_answer_via_tool_and_citation_markers(settings):
+    reply = {
+        "answerable": True,
+        "answer": "Revenue rose [1] while costs fell [3].",
+        "citations": ["[1]"],
+    }
+    llm = LLM(settings.llm, None, client=FakeAnthropic(lambda req: reply))
+    ans = generate_answer("What happened?", passages(), llm)
+    assert ans.citations == [1, 3]  # listed + markers in the text
+    assert llm.client.calls[0]["tool_choice"] == {"type": "tool", "name": "submit_answer"}
+
+
+def test_answer_retries_when_cut_off(settings):
+    calls = []
+
+    def reply(req):
+        calls.append(req["max_tokens"])
+        return (
+            "{truncated"
+            if len(calls) == 1
+            else {"answerable": True, "answer": "ok [1]", "citations": [1]}
+        )
+
+    ans = generate_answer("q", passages(), LLM(settings.llm, None, client=FakeAnthropic(reply)))
+    assert calls == [2048, 4096] and ans.answer == "ok [1]"

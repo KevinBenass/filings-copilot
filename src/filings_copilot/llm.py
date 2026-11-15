@@ -41,8 +41,17 @@ class LLMResponse:
 
 
 class LLM:
-    def __init__(self, cfg: LLMConfig, cache_path: Path | None = None, client: Any = None) -> None:
+    def __init__(
+        self,
+        cfg: LLMConfig,
+        cache_path: Path | None = None,
+        client: Any = None,
+        read_cache: bool = True,
+    ) -> None:
         self.cfg = cfg
+        # read_cache=False still writes responses, but always calls the API: used when
+        # measuring latency, where a cache hit would report an unrealistically fast step.
+        self.read_cache = read_cache
         self.total = Usage()
         self._lock = threading.Lock()
         self._client = client
@@ -71,6 +80,71 @@ class LLM:
             + usage.output_tokens * p.output
         ) / 1e6
 
+    def _send(self, request: dict[str, Any]) -> tuple[dict[str, Any], Usage | None]:
+        """Send a request through the disk cache. Returns ({"text", "tool_input", "stop_reason"}, usage)."""
+        key = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
+        if self._db is not None and self.read_cache:
+            # One SQLite connection is shared by worker threads; all access goes through the lock.
+            with self._lock:
+                row = self._db.execute("SELECT value FROM cache WHERE key = ?", (key,)).fetchone()
+                if row:
+                    self.total.cache_hits += 1
+            if row:
+                return json.loads(row[0]), None
+
+        resp = self.client.messages.create(**request)
+        value: dict[str, Any] = {
+            "text": "".join(
+                getattr(b, "text", "") or ""
+                for b in resp.content
+                if getattr(b, "type", "text") == "text"
+            ),
+            "tool_input": next(
+                (b.input for b in resp.content if getattr(b, "type", None) == "tool_use"), None
+            ),
+            "stop_reason": getattr(resp, "stop_reason", None),
+        }
+        u = resp.usage
+        usage = Usage(
+            input_tokens=u.input_tokens,
+            output_tokens=u.output_tokens,
+            cache_read_tokens=getattr(u, "cache_read_input_tokens", 0) or 0,
+            cache_write_tokens=getattr(u, "cache_creation_input_tokens", 0) or 0,
+            calls=1,
+        )
+        usage.cost_usd = self.price(request["model"], usage)
+        with self._lock:
+            self.total.add(usage)
+            if self._db is not None:
+                self._db.execute(
+                    "INSERT OR REPLACE INTO cache VALUES (?, ?)", (key, json.dumps(value))
+                )
+                self._db.commit()
+        return value, usage
+
+    def _base_request(
+        self,
+        prompt: str,
+        model: str | None,
+        system: str | None,
+        cached_prefix: str | None,
+        max_tokens: int | None,
+    ) -> dict[str, Any]:
+        content: list[dict[str, Any]] = []
+        if cached_prefix:
+            content.append(
+                {"type": "text", "text": cached_prefix, "cache_control": {"type": "ephemeral"}}
+            )
+        content.append({"type": "text", "text": prompt})
+        request: dict[str, Any] = {
+            "model": model or self.cfg.answer_model,
+            "max_tokens": max_tokens or self.cfg.max_tokens,
+            "messages": [{"role": "user", "content": content}],
+        }
+        if system:
+            request["system"] = system
+        return request
+
     def complete(
         self,
         prompt: str,
@@ -80,55 +154,41 @@ class LLM:
         cached_prefix: str | None = None,
         max_tokens: int | None = None,
     ) -> LLMResponse:
-        """One-turn completion.
+        """One-turn text completion.
 
         ``cached_prefix`` is a large, reused block of context (e.g. a whole 10-K section)
         placed before the prompt with a cache breakpoint, so repeated calls pay ~10% for it.
         """
-        model = model or self.cfg.answer_model
-        params = {
-            "model": model,
-            "max_tokens": max_tokens or self.cfg.max_tokens,
-        }
-        content: list[dict[str, Any]] = []
-        if cached_prefix:
-            content.append(
-                {"type": "text", "text": cached_prefix, "cache_control": {"type": "ephemeral"}}
-            )
-        content.append({"type": "text", "text": prompt})
-        request: dict[str, Any] = {**params, "messages": [{"role": "user", "content": content}]}
-        if system:
-            request["system"] = system
-
-        key = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
-        if self._db is not None:
-            # One SQLite connection is shared by worker threads; all access goes through the lock.
-            with self._lock:
-                row = self._db.execute("SELECT value FROM cache WHERE key = ?", (key,)).fetchone()
-                if row:
-                    self.total.cache_hits += 1
-            if row:
-                return LLMResponse(text=json.loads(row[0])["text"], cached=True)
-
-        resp = self.client.messages.create(**request)
-        text = "".join(getattr(b, "text", "") for b in resp.content)
-        u = resp.usage
-        usage = Usage(
-            input_tokens=u.input_tokens,
-            output_tokens=u.output_tokens,
-            cache_read_tokens=getattr(u, "cache_read_input_tokens", 0) or 0,
-            cache_write_tokens=getattr(u, "cache_creation_input_tokens", 0) or 0,
-            calls=1,
+        value, usage = self._send(
+            self._base_request(prompt, model, system, cached_prefix, max_tokens)
         )
-        usage.cost_usd = self.price(model, usage)
-        with self._lock:
-            self.total.add(usage)
-            if self._db is not None:
-                self._db.execute(
-                    "INSERT OR REPLACE INTO cache VALUES (?, ?)", (key, json.dumps({"text": text}))
-                )
-                self._db.commit()
-        return LLMResponse(text=text, usage=usage)
+        return LLMResponse(text=value.get("text", ""), usage=usage or Usage(), cached=usage is None)
+
+    def complete_tool(
+        self,
+        prompt: str,
+        tool: dict[str, Any],
+        *,
+        model: str | None = None,
+        system: str | None = None,
+        max_tokens: int | None = None,
+    ) -> tuple[dict[str, Any], Usage]:
+        """Structured output: force a call to ``tool`` and return its validated input.
+
+        Raises ValueError if the output was cut off by ``max_tokens`` or no tool call came back,
+        so callers can retry with more room instead of scoring a truncated result.
+        """
+        request = self._base_request(prompt, model, system, None, max_tokens)
+        request["tools"] = [tool]
+        request["tool_choice"] = {"type": "tool", "name": tool["name"]}
+        value, usage = self._send(request)
+        if value.get("stop_reason") == "max_tokens" or not isinstance(
+            value.get("tool_input"), dict
+        ):
+            raise ValueError(
+                f"{tool['name']}: no complete tool call (stop_reason={value.get('stop_reason')})"
+            )
+        return value["tool_input"], usage or Usage()
 
     def complete_json(self, prompt: str, **kwargs: Any) -> Any:
         return parse_json(self.complete(prompt, **kwargs).text)
@@ -141,6 +201,6 @@ def parse_json(text: str) -> Any:
     start = min((i for i in (candidate.find("{"), candidate.find("[")) if i != -1), default=-1)
     if start == -1:
         raise ValueError(f"No JSON found in model output: {text[:200]!r}")
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(strict=False)  # tolerate raw newlines inside strings
     obj, _ = decoder.raw_decode(candidate[start:])
     return obj
