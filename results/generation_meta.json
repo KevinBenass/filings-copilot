@@ -1,0 +1,9 @@
+{
+  "answer_model": "claude-sonnet-5-5",
+  "judge_model": "claude-haiku-5-5",
+  "config": "structure-400-llm",
+  "n": 310,
+  "llm_calls": 567,
+  "cache_hits": 0,
+  "cost_usd": 6.9081
+}
