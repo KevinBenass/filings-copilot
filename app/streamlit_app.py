@@ -9,8 +9,9 @@ import re
 
 import streamlit as st
 
-from filings_copilot.cli import BEST_CONFIG, settings_for
+from filings_copilot.cli import settings_for
 from filings_copilot.config import load_ablations
+from filings_copilot.eval.runner import best_config
 from filings_copilot.generate.answer import Copilot
 from filings_copilot.llm import LLM
 from filings_copilot.retrieve.factory import build_retriever
@@ -35,7 +36,7 @@ def load(config: str) -> Copilot:
 with st.sidebar:
     st.header("Pipeline")
     names = [s["name"] for s in load_ablations()]
-    config = st.selectbox("Configuration", names, index=names.index(BEST_CONFIG))
+    config = st.selectbox("Configuration", names, index=names.index(best_config()))
     st.caption("Switch configurations to see how each component changes the retrieved passages.")
     show_debug = st.toggle("Show retrieval ranks", value=True)
 

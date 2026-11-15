@@ -47,35 +47,33 @@ def ablation_chart(df: pd.DataFrame, path: Path) -> None:
 
 
 def generation_table(df: pd.DataFrame) -> pd.DataFrame:
-    answerable = df[df["qtype"] != "unanswerable"]
-    rows = []
-    for qtype, g in answerable.groupby("qtype"):
-        rows.append(
-            {
-                "question type": qtype,
-                "n": len(g),
-                "correctness": g["correctness"].mean(),
-                "faithfulness": g["faithfulness"].mean(),
-                "citation precision": g["citation_precision"].mean(),
-                "false abstention": g["false_abstain"].mean(),
-            }
-        )
-    rows.append(
-        {
-            "question type": "**all answerable**",
-            "n": len(answerable),
-            "correctness": answerable["correctness"].mean(),
-            "faithfulness": answerable["faithfulness"].mean(),
-            "citation precision": answerable["citation_precision"].mean(),
-            "false abstention": answerable["false_abstain"].mean(),
+    """Answer quality by question type.
+
+    ``graded`` counts questions with a correctness score: answers the judge scored, plus
+    abstentions (scored 0). A judge failure is never silently dropped: it shows up here.
+    """
+
+    def row(label: str, g: pd.DataFrame) -> dict:
+        return {
+            "question type": label,
+            "n": len(g),
+            "graded": int(g["correctness"].notna().sum()),
+            "correctness": g["correctness"].mean(),
+            "faithfulness": g["faithfulness"].mean(),
+            "citation precision": g["citation_precision"].mean(),
+            "false abstention": g["false_abstain"].mean(),
         }
-    )
+
+    answerable = df[df["qtype"] != "unanswerable"]
+    rows = [row(qtype, g) for qtype, g in answerable.groupby("qtype")]
+    rows.append(row("**all answerable**", answerable))
     un = df[df["qtype"] == "unanswerable"]
     if len(un):
         rows.append(
             {
                 "question type": "unanswerable (correct abstention)",
                 "n": len(un),
+                "graded": len(un),
                 "correctness": un["abstain_correct"].mean(),
             }
         )
@@ -164,8 +162,11 @@ def build_report(results_dir: Path, readme: Path | None = None) -> str:
         parts += [
             "",
             "### End-to-end answer quality",
-            f"Answer model `{meta.get('answer_model', '?')}`, judge `{meta.get('judge_model', '?')}`, "
-            f"{meta.get('n', len(gen))} questions, total eval cost ${meta.get('cost_usd', 0):.2f}.",
+            f"Retrieval configuration `{meta.get('config', '?')}` (the best Recall@5 in the ablation), "
+            f"answer model `{meta.get('answer_model', '?')}`, judge `{meta.get('judge_model', '?')}`, "
+            f"{meta.get('n', len(gen))} questions, total eval cost ${meta.get('cost_usd', 0):.2f}. "
+            "Correctness, faithfulness and citation precision are averaged over graded answers; "
+            "abstentions on answerable questions count as incorrect.",
             "",
             _fmt(generation_table(gen)).to_markdown(index=False, disable_numparse=True),
         ]

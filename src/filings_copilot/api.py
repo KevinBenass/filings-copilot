@@ -12,7 +12,8 @@ from functools import lru_cache
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from filings_copilot.cli import BEST_CONFIG, settings_for
+from filings_copilot.cli import settings_for
+from filings_copilot.eval.runner import best_config
 from filings_copilot.generate.answer import Copilot
 from filings_copilot.llm import LLM
 from filings_copilot.retrieve.factory import build_retriever
@@ -53,7 +54,7 @@ class AskResponse(RetrieveResponse):
 
 @lru_cache(maxsize=1)
 def copilot() -> Copilot:
-    s = settings_for(os.environ.get("FCOPILOT_CONFIG", BEST_CONFIG))
+    s = settings_for(os.environ.get("FCOPILOT_CONFIG") or best_config())
     llm = LLM(s.llm, s.resolve(s.llm.cache_path))
     return Copilot(build_retriever(s, llm), llm)
 

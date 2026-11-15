@@ -81,6 +81,7 @@ def test_judge_scores(settings):
     row = judge(gold, ans, llm)
     assert row == {
         "false_abstain": 0.0,
+        "judge_failed": 0.0,
         "correctness": 0.5,
         "faithfulness": 0.5,
         "citation_precision": 0.5,
@@ -142,3 +143,31 @@ def test_disk_cache_is_thread_safe(settings, tmp_path):
         texts = list(pool.map(lambda p: llm.complete(p, model="claude-haiku-5-5").text, prompts))
     assert texts == ["ok"] * len(prompts)
     assert llm.total.calls + llm.total.cache_hits == len(prompts)
+
+
+def test_judge_retries_cut_off_output_and_records_failures(settings):
+    """Long answers once produced judge JSON cut off at max_tokens; those were silently dropped."""
+    full = json.dumps(
+        {
+            "correctness": 1,
+            "claims": [{"claim": "a", "supported": True}],
+            "citation_support": {"1": True},
+        }
+    )
+    calls = []
+
+    def reply(req):
+        calls.append(req["max_tokens"])
+        return full[:40] if len(calls) == 1 else full  # first attempt truncated mid-JSON
+
+    llm = LLM(settings.llm, None, client=FakeAnthropic(reply))
+    gold = GoldQuestion(qid="q", question="?", answer="ref", qtype="multi_hop")
+    ans = Answer(
+        question="?", answer="long answer", answerable=True, citations=[1], passages=passages()
+    )
+    row = judge(gold, ans, llm)
+    assert calls[0] < calls[1] and row["correctness"] == 1.0 and row["judge_failed"] == 0.0
+
+    always_cut = LLM(settings.llm, None, client=FakeAnthropic(lambda req: full[:40]))
+    row = judge(gold, ans, always_cut)
+    assert row["judge_failed"] == 1.0 and row["correctness"] is None

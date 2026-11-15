@@ -204,3 +204,92 @@ def test_evidence_context_prose_highlights_quote():
     ctx = evidence_context(text, s, s + len("Revenue grew 12% due to volume."))
     assert [line for line, ev in ctx if ev] == ["Revenue grew 12% due to volume."]
     assert ctx[0][0].startswith("…") and ctx[-1][0].endswith("…")
+
+
+def test_generation_table_counts_graded_answers():
+    from filings_copilot.eval.report import generation_table
+
+    df = pd.DataFrame(
+        [
+            {
+                "qtype": "multi_hop",
+                "correctness": 1.0,
+                "faithfulness": 1.0,
+                "citation_precision": 1.0,
+                "false_abstain": 0.0,
+            },
+            {
+                "qtype": "multi_hop",
+                "correctness": None,
+                "faithfulness": None,
+                "citation_precision": None,
+                "false_abstain": 0.0,
+            },
+            {
+                "qtype": "multi_hop",
+                "correctness": 0.0,
+                "faithfulness": None,
+                "citation_precision": None,
+                "false_abstain": 1.0,
+            },
+        ]
+    )
+    row = generation_table(df).iloc[0]
+    assert row["n"] == 3 and row["graded"] == 2 and row["correctness"] == 0.5
+
+
+def test_best_config_picks_highest_recall(tmp_path):
+    from filings_copilot.eval.runner import best_config
+
+    pd.DataFrame(
+        [
+            {"config": "+ filters", "recall@5": 0.80, "p50_ms": 3000},
+            {"config": "full − rerank", "recall@5": 0.83, "p50_ms": 2000},
+            {"config": "+ decomposition", "recall@5": 0.83, "p50_ms": 5000},
+            {"config": "not a real step", "recall@5": 0.99, "p50_ms": 1},
+        ]
+    ).to_csv(tmp_path / "retrieval_ablation.csv", index=False)
+    assert best_config(tmp_path) == "full − rerank"  # tie on recall -> faster wins
+    assert best_config(tmp_path / "missing") == "+ filters"
+
+
+def test_ablation_reuses_saved_steps(tmp_path, monkeypatch):
+    import filings_copilot.eval.runner as runner
+    from filings_copilot.config import load_settings
+    from filings_copilot.schemas import GoldQuestion
+
+    settings = load_settings(overrides={"eval.results_dir": str(tmp_path)})
+    monkeypatch.setattr(runner, "load_settings", lambda overrides=None: settings)
+    monkeypatch.setattr(
+        runner,
+        "load_ablations",
+        lambda: [{"name": "a", "overrides": {}}, {"name": "b", "overrides": {}}],
+    )
+    monkeypatch.setattr(runner, "ensure_chunks", lambda *a: None)
+    computed = []
+
+    def fake_run(s, gold):
+        computed.append(1)
+        return pd.DataFrame(
+            [
+                {
+                    "qid": "q1",
+                    "qtype": "single_hop",
+                    "latency_ms": 1.0,
+                    "recall@5": 1.0,
+                    "recall@10": 1.0,
+                    "mrr": 1.0,
+                    "ndcg@10": 1.0,
+                    "hit@1": 1.0,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(runner, "run_retrieval", fake_run)
+    gold = [GoldQuestion(qid="q1", question="?", answer="a", qtype="single_hop")]
+    runner.run_ablation(gold)
+    assert len(computed) == 2
+    table = runner.run_ablation(gold)  # second run reuses both saved steps
+    assert len(computed) == 2 and list(table["config"]) == ["a", "b"]
+    runner.run_ablation(gold, force=["b"])
+    assert len(computed) == 3

@@ -20,7 +20,6 @@ ConfigOpt = Annotated[
 SetOpt = Annotated[
     list[str] | None, typer.Option("--set", help="Override, e.g. --set retrieval.top_k=5")
 ]
-BEST_CONFIG = "+ filters"
 
 
 def _coerce(v: str):
@@ -268,26 +267,36 @@ def eval_retrieval(
     allow_llm_cost: Annotated[
         bool, typer.Option(help="Permit LLM chunk contextualization")
     ] = False,
-    only: Annotated[list[str] | None, typer.Option(help="Run only these ablation steps")] = None,
+    force: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="Recompute these steps even if saved results exist ('all' for every step)"
+        ),
+    ] = None,
 ) -> None:
-    """Run the retrieval ablation ladder over the gold set (no LLM except optional steps)."""
+    """Run the retrieval ablation ladder over the gold set, reusing saved steps."""
     from filings_copilot.eval.dataset import load_gold
     from filings_copilot.eval.runner import run_ablation
 
     s = load_settings()
-    df = run_ablation(load_gold(s.resolve(s.eval.gold_path)), allow_llm_cost, only)
+    df = run_ablation(load_gold(s.resolve(s.eval.gold_path)), allow_llm_cost, force)
     console.print(df.to_string(index=False))
 
 
 @app.command("eval-generation")
-def eval_generation(config: ConfigOpt = BEST_CONFIG, limit: int | None = None) -> None:
-    """End-to-end eval: retrieve, answer with Claude, grade with an LLM judge."""
+def eval_generation(config: ConfigOpt = None, limit: int | None = None) -> None:
+    """End-to-end eval: retrieve, answer with Claude, grade with an LLM judge.
+
+    Uses the best retrieval configuration from the ablation unless --config is given.
+    """
     from filings_copilot.eval.dataset import load_gold
     from filings_copilot.eval.report import generation_table
-    from filings_copilot.eval.runner import run_generation
+    from filings_copilot.eval.runner import best_config, run_generation
 
+    config = config or best_config()
+    console.print(f"Configuration: [bold]{config}[/]")
     s = settings_for(config)
-    df = run_generation(s, load_gold(s.resolve(s.eval.gold_path)), limit)
+    df = run_generation(s, load_gold(s.resolve(s.eval.gold_path)), limit, config_name=config)
     console.print(generation_table(df).to_string(index=False))
 
 
@@ -303,15 +312,16 @@ def report() -> None:
 @app.command()
 def ask(
     question: str,
-    config: ConfigOpt = BEST_CONFIG,
+    config: ConfigOpt = None,
     generate: Annotated[bool, typer.Option(help="Generate an answer (needs API key)")] = True,
 ) -> None:
     """Ask a question. Use --no-generate to inspect retrieval only."""
+    from filings_copilot.eval.runner import best_config
     from filings_copilot.generate.answer import Copilot
     from filings_copilot.llm import LLM
     from filings_copilot.retrieve.factory import build_retriever
 
-    s = settings_for(config)
+    s = settings_for(config or best_config())
     llm = LLM(s.llm, s.resolve(s.llm.cache_path))
     retriever = build_retriever(s, llm)
     if not generate:

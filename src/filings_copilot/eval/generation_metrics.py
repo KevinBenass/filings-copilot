@@ -34,7 +34,7 @@ Tasks:
    be rounded or phrased differently), 0.5 = partially correct or incomplete, 0 = wrong or
    missing the key fact.
 2. claims: split the system answer into atomic factual claims. For each, decide whether the
-   passages above support it.
+   passages above support it. Keep each claim short (at most 12 words); cover every claim.
 3. citation_support: for each cited passage id, does that passage support at least one claim?
 
 Respond with JSON only:
@@ -51,21 +51,31 @@ def judge(gold: GoldQuestion, answer: Answer, llm: LLM) -> dict[str, float | Non
     if not answer.answerable:
         row.update(correctness=0.0, faithfulness=None, citation_precision=None)
         return row
-    try:
-        out = llm.complete_json(
-            JUDGE_PROMPT.format(
-                passages=format_passages(answer.passages),
-                question=gold.question,
-                reference=gold.answer,
-                answer=answer.answer,
-                cited=answer.citations or "none",
-            ),
-            model=llm.cfg.judge_model,
-            max_tokens=800,
-        )
-    except ValueError:
-        return {**row, "correctness": None, "faithfulness": None, "citation_precision": None}
-
+    prompt = JUDGE_PROMPT.format(
+        passages=format_passages(answer.passages),
+        question=gold.question,
+        reference=gold.answer,
+        answer=answer.answer,
+        cited=answer.citations or "none",
+    )
+    out = None
+    # Long answers have many claims: give the judge room, and retry once with more if its
+    # JSON is still cut off. Failures are recorded, never silently dropped from averages.
+    for max_tokens in (3000, 8000):
+        try:
+            out = llm.complete_json(prompt, model=llm.cfg.judge_model, max_tokens=max_tokens)
+            break
+        except ValueError:
+            continue
+    if out is None:
+        return {
+            **row,
+            "judge_failed": 1.0,
+            "correctness": None,
+            "faithfulness": None,
+            "citation_precision": None,
+        }
+    row["judge_failed"] = 0.0
     claims = out.get("claims") or []
     support = out.get("citation_support") or {}
     row["correctness"] = float(out.get("correctness", 0))

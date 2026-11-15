@@ -20,3 +20,7 @@
   overrides: {retrieval.mode: hybrid, retrieval.rerank: true, retrieval.use_filters: true, chunking.context: llm, chunking.strategy: structure}
 - name: + decomposition
   overrides: {retrieval.mode: hybrid, retrieval.rerank: true, retrieval.use_filters: true, retrieval.decompose: true, chunking.context: llm, chunking.strategy: structure}
+# Leave-one-out: the full pipeline without the reranker. The CPU-sized cross-encoder
+# lowered recall above, so this checks whether dropping it is better overall.
+- name: full − rerank
+  overrides: {retrieval.mode: hybrid, retrieval.rerank: false, retrieval.use_filters: true, retrieval.decompose: true, chunking.context: llm, chunking.strategy: structure}

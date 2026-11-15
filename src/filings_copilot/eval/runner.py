@@ -65,26 +65,37 @@ def run_retrieval(settings: Settings, gold: list[GoldQuestion]) -> pd.DataFrame:
 
 
 def run_ablation(
-    gold: list[GoldQuestion], allow_llm_cost: bool = False, only: list[str] | None = None
+    gold: list[GoldQuestion], allow_llm_cost: bool = False, force: list[str] | None = None
 ) -> pd.DataFrame:
+    """Run (or reuse) every step of the ablation ladder and write the summary table.
+
+    Per-question results of each step are saved in results/runs/. A step is recomputed
+    only if its saved results are missing, cover different questions, or it is named in
+    ``force`` ("all" recomputes everything).
+    """
     base = load_settings()
     out_dir = base.resolve(base.eval.results_dir)
     (out_dir / "runs").mkdir(parents=True, exist_ok=True)
     summary = []
     prev: pd.DataFrame | None = None
+    expected = {q.qid for q in gold if q.qtype != "unanswerable"}
     for step in load_ablations():
-        if only and step["name"] not in only:
-            continue
-        overrides = {**step["overrides"], "retrieval.top_k": max(base.eval.ks)}
-        settings = load_settings(overrides=overrides)
-        console.rule(step["name"])
-        ensure_chunks(settings, allow_llm_cost)
-        df = run_retrieval(settings, gold)
-        df.to_json(
-            out_dir / "runs" / f"retrieval_{_slug(step['name'])}.jsonl",
-            orient="records",
-            lines=True,
-        )
+        path = out_dir / "runs" / f"retrieval_{_slug(step['name'])}.jsonl"
+        recompute = force is not None and ("all" in force or step["name"] in force)
+        df = None
+        if path.exists() and not recompute:
+            df = pd.read_json(path, lines=True)
+            if set(df["qid"]) != expected:
+                df = None  # gold set changed since this step ran
+            else:
+                console.print(f"[dim]{step['name']}: reusing saved results")
+        if df is None:
+            overrides = {**step["overrides"], "retrieval.top_k": max(base.eval.ks)}
+            settings = load_settings(overrides=overrides)
+            console.rule(step["name"])
+            ensure_chunks(settings, allow_llm_cost)
+            df = run_retrieval(settings, gold)
+            df.to_json(path, orient="records", lines=True)
         row = {"config": step["name"], "n": len(df)}
         for col in ["recall@5", "recall@10", "mrr", "ndcg@10", "hit@1"]:
             row[col] = df[col].mean()
@@ -107,6 +118,7 @@ def run_generation(
     gold: list[GoldQuestion],
     limit: int | None = None,
     workers: int | None = None,
+    config_name: str | None = None,
 ) -> pd.DataFrame:
     llm = LLM(settings.llm, settings.resolve(settings.llm.cache_path))
     retriever = build_retriever(settings, llm)
@@ -144,7 +156,7 @@ def run_generation(
     meta = {
         "answer_model": settings.llm.answer_model,
         "judge_model": settings.llm.judge_model,
-        "config": settings.chunking.variant,
+        "config": config_name or settings.chunking.variant,
         "n": len(df),
         "llm_calls": usage.calls,
         "cache_hits": usage.cache_hits,
@@ -159,5 +171,27 @@ def _slug(name: str) -> str:
 
 
 def results_dir() -> Path:
+    s = load_settings()
+    return s.resolve(s.eval.results_dir)
+
+
+def best_config(results_dir: Path | None = None, fallback: str = "+ filters") -> str:
+    """The ablation step with the highest Recall@5 (ties: lower median latency).
+
+    Answer generation, the API and the demo use this, so the evaluation decides what ships.
+    """
+    path = (results_dir or results_dir_default()) / "retrieval_ablation.csv"
+    names = {s["name"] for s in load_ablations()}
+    if not path.exists():
+        return fallback
+    df = pd.read_csv(path)
+    df = df[df["config"].isin(names)]
+    if df.empty:
+        return fallback
+    best = df.sort_values(["recall@5", "p50_ms"], ascending=[False, True]).iloc[0]
+    return str(best["config"])
+
+
+def results_dir_default() -> Path:
     s = load_settings()
     return s.resolve(s.eval.results_dir)
