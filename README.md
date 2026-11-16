@@ -33,6 +33,12 @@ uv run fcopilot ask "What was Apple's iPhone revenue in Greater China in fiscal 
 
 It answers what the filing does disclose and states plainly what it doesn't. This behavior is measured systematically, not just shown once: the evaluation set includes 30 plausible questions the filings cannot answer, and the [results](#results) report how often the system correctly abstains.
 
+### Demo app
+
+`make app` opens a Streamlit UI that shows each step as it runs, streams the answer, and lists the retrieved passages with their rank from each search method (here, BM25 ranked the cited passage 3rd, dense search 1st):
+
+![Filings Copilot app](docs/app.png)
+
 ## Architecture
 
 ```mermaid
