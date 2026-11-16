@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Callable
 
 from filings_copilot.llm import LLM
 from filings_copilot.retrieve.pipeline import Retriever
@@ -45,7 +46,43 @@ def format_passages(passages: list[RetrievedChunk]) -> str:
     return "\n\n".join(blocks)
 
 
-def generate_answer(question: str, passages: list[RetrievedChunk], llm: LLM) -> Answer:
+def partial_answer(received: str) -> str:
+    """The "answer" field of a JSON reply that is still streaming in, decoded so far."""
+    m = re.search(r'"answer"\s*:\s*"', received)
+    if not m:
+        return ""
+    body = received[m.end() :]
+    out, i = [], 0
+    while i < len(body):
+        ch = body[i]
+        if ch == '"':
+            break  # closing quote: the field is complete
+        if ch == "\\":
+            if i + 1 >= len(body):
+                break  # escape sequence not fully received yet
+            nxt = body[i + 1]
+            if nxt == "u":
+                if i + 6 > len(body):
+                    break
+                out.append(chr(int(body[i + 2 : i + 6], 16)))
+                i += 6
+                continue
+            out.append({"n": "\n", "t": "\t", "r": "", "b": "", "f": ""}.get(nxt, nxt))
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def generate_answer(
+    question: str,
+    passages: list[RetrievedChunk],
+    llm: LLM,
+    on_text: Callable[[str], None] | None = None,
+) -> Answer:
+    """Cited answer. With ``on_text``, the answer is streamed: it is called with the answer
+    text received so far, so a UI can display it while it is being written."""
     t0 = time.perf_counter()
     prompt = f"{format_passages(passages)}\n\nQuestion: {question}"
     data: dict = {}
@@ -54,13 +91,23 @@ def generate_answer(question: str, passages: list[RetrievedChunk], llm: LLM) -> 
     # more room if a long answer is cut off.
     for max_tokens in (2048, 4096):
         try:
-            data, usage = llm.complete_structured(
-                prompt,
-                ANSWER_SCHEMA,
-                model=llm.cfg.answer_model,
-                system=SYSTEM,
-                max_tokens=max_tokens,
-            )
+            if on_text is not None:
+                data, usage = llm.complete_structured_streaming(
+                    prompt,
+                    ANSWER_SCHEMA,
+                    lambda received: on_text(partial_answer(received)),
+                    model=llm.cfg.answer_model,
+                    system=SYSTEM,
+                    max_tokens=max_tokens,
+                )
+            else:
+                data, usage = llm.complete_structured(
+                    prompt,
+                    ANSWER_SCHEMA,
+                    model=llm.cfg.answer_model,
+                    system=SYSTEM,
+                    max_tokens=max_tokens,
+                )
             cost += usage.cost_usd
             break
         except ValueError:
@@ -92,11 +139,11 @@ class Copilot:
         self.retriever = retriever
         self.llm = llm
 
-    def ask(self, question: str) -> Answer:
+    def ask(self, question: str, on_text: Callable[[str], None] | None = None) -> Answer:
         t0 = time.perf_counter()
         before = self.llm.total.cost_usd
         passages = self.retriever.retrieve(question)
-        ans = generate_answer(question, passages, self.llm)
+        ans = generate_answer(question, passages, self.llm, on_text=on_text)
         ans.latency_ms = (time.perf_counter() - t0) * 1e3
         ans.cost_usd = self.llm.total.cost_usd - before
         return ans

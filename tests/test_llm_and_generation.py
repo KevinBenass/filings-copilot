@@ -1,3 +1,4 @@
+import itertools
 import json
 
 import pytest
@@ -287,3 +288,59 @@ def test_answer_retries_when_cut_off(settings):
 
     ans = generate_answer("q", passages(), LLM(settings.llm, None, client=FakeAnthropic(reply)))
     assert calls == [2048, 4096] and ans.answer == "ok [1]"
+
+
+def test_partial_answer_decodes_a_streaming_json_field():
+    from filings_copilot.generate.answer import partial_answer
+
+    full = json.dumps(
+        {"answerable": True, "answer": 'Revenue "rose" 12%\nsee [1]', "citations": [1]}
+    )
+    seen = [partial_answer(full[:i]) for i in range(len(full) + 1)]
+    assert seen[-1] == 'Revenue "rose" 12%\nsee [1]'
+    # Never shows escape characters or the closing JSON, and only ever grows.
+    assert all(not s.endswith("\\") for s in seen)
+    assert all(b.startswith(a) for a, b in itertools.pairwise(seen))
+
+
+def test_streamed_answer_matches_non_streamed_and_shares_the_cache(settings, tmp_path):
+    reply = {
+        "answerable": True,
+        "answer": "Revenue rose [1] and margins fell [2].",
+        "citations": [1, 2],
+    }
+    fake = FakeAnthropic(lambda req: reply)
+    llm = LLM(settings.llm, tmp_path / "c.sqlite", client=fake)
+    shown = []
+    streamed = generate_answer("What happened?", passages(), llm, on_text=shown.append)
+    assert len(shown) > 3 and shown[-1] == reply["answer"]
+    assert streamed.answer == reply["answer"] and streamed.citations == [1, 2]
+    again = generate_answer("What happened?", passages(), llm)  # same request: cache hit
+    assert again.answer == streamed.answer and len(fake.calls) == 1
+
+
+def test_streamed_answer_retries_when_cut_off(settings):
+    calls = []
+
+    def reply(req):
+        calls.append(req["max_tokens"])
+        return (
+            "{truncated"
+            if len(calls) == 1
+            else {"answerable": True, "answer": "ok [1]", "citations": [1]}
+        )
+
+    llm = LLM(settings.llm, None, client=FakeAnthropic(reply))
+    ans = generate_answer("q", passages(), llm, on_text=lambda t: None)
+    assert calls == [2048, 4096] and ans.answer == "ok [1]"
+
+
+def test_streaming_request_matches_installed_sdk_signature(settings):
+    import inspect
+
+    import anthropic
+
+    accepted = set(inspect.signature(anthropic.resources.messages.Messages.stream).parameters)
+    fake = FakeAnthropic(lambda req: {"answerable": True, "answer": "x", "citations": []})
+    generate_answer("q", passages(), LLM(settings.llm, None, client=fake), on_text=lambda t: None)
+    assert set(fake.calls[0]) <= accepted, set(fake.calls[0]) - accepted

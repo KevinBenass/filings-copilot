@@ -170,7 +170,7 @@ make data              # download + parse 24 10-Ks from EDGAR            free, ~
 make index             # chunk, contextualize, embed                     ~$10-20, ~15 min CPU
 make evalset           # generate the gold set, then `uv run fcopilot review`   ~$2
 make eval              # retrieval ablation + end-to-end eval + report   ~$10
-make app               # Streamlit demo at localhost:8501
+make app               # Streamlit demo at localhost:8501 (answers stream in: first words after ~2 s)
 ```
 
 Retrieval runs without an API key:

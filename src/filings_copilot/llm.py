@@ -11,6 +11,7 @@ import json
 import re
 import sqlite3
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -186,6 +187,63 @@ class LLM:
                 f"structured output incomplete (stop_reason={value.get('stop_reason')})"
             )
         return json.loads(value.get("text") or "null") or {}, usage or Usage()
+
+    def complete_structured_streaming(
+        self,
+        prompt: str,
+        schema: dict[str, Any],
+        on_text: Callable[[str], None],
+        *,
+        model: str | None = None,
+        system: str | None = None,
+        max_tokens: int | None = None,
+    ) -> tuple[dict[str, Any], Usage]:
+        """Like ``complete_structured``, but calls ``on_text`` with the reply received so far
+        as it streams in, so a UI can show the answer while it is written.
+
+        Same request and cache key as the non-streaming call, so the two share the cache.
+        """
+        request = self._base_request(prompt, model, system, None, max_tokens)
+        request["output_config"] = {"format": {"type": "json_schema", "schema": schema}}
+        key = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
+        row = None
+        if self._db is not None and self.read_cache:
+            with self._lock:
+                row = self._db.execute("SELECT value FROM cache WHERE key = ?", (key,)).fetchone()
+                if row:
+                    self.total.cache_hits += 1
+        if row:
+            value, usage = json.loads(row[0]), Usage()
+            on_text(value.get("text", ""))
+        else:
+            received = ""
+            with self.client.messages.stream(**request) as stream:
+                for delta in stream.text_stream:
+                    received += delta
+                    on_text(received)
+                final = stream.get_final_message()
+            value = {"text": received, "tool_input": None, "stop_reason": final.stop_reason}
+            u = final.usage
+            usage = Usage(
+                input_tokens=u.input_tokens,
+                output_tokens=u.output_tokens,
+                cache_read_tokens=getattr(u, "cache_read_input_tokens", 0) or 0,
+                cache_write_tokens=getattr(u, "cache_creation_input_tokens", 0) or 0,
+                calls=1,
+            )
+            usage.cost_usd = self.price(request["model"], usage)
+            with self._lock:
+                self.total.add(usage)
+                if self._db is not None:
+                    self._db.execute(
+                        "INSERT OR REPLACE INTO cache VALUES (?, ?)", (key, json.dumps(value))
+                    )
+                    self._db.commit()
+        if value.get("stop_reason") in ("max_tokens", "refusal"):
+            raise ValueError(
+                f"structured output incomplete (stop_reason={value.get('stop_reason')})"
+            )
+        return json.loads(value.get("text") or "null") or {}, usage
 
     def complete_json(self, prompt: str, **kwargs: Any) -> Any:
         return parse_json(self.complete(prompt, **kwargs).text)

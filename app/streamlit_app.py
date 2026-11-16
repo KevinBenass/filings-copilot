@@ -6,6 +6,7 @@ Run: `make app`
 from __future__ import annotations
 
 import re
+import time
 
 import streamlit as st
 
@@ -41,7 +42,7 @@ with st.sidebar:
     show_debug = st.toggle("Show retrieval ranks", value=True)
 
 st.title("📑 Filings Copilot")
-st.caption("Cited answers from SEC 10-K filings · hybrid search · cross-encoder reranking")
+st.caption("Cited answers from SEC 10-K filings · hybrid search over contextualized chunks")
 
 question = st.text_input("Ask about the filings", placeholder=EXAMPLES[0])
 cols = st.columns(len(EXAMPLES))
@@ -51,15 +52,29 @@ for col, ex in zip(cols, EXAMPLES, strict=True):
 
 if question:
     copilot = load(config)
-    with st.spinner("Retrieving and answering…"):
-        ans = copilot.ask(question)
+    box = st.empty()
+    with st.spinner("Searching the filings and writing the answer…"):
+        first_token: list[float] = []
 
-    if not ans.answerable:
-        st.warning("The filings in the corpus don't contain enough to answer this fully.")
+        def show(text: str) -> None:
+            # The answer appears as it is written; first words after ~2 s instead of ~8 s.
+            if text and not first_token:
+                first_token.append(time.perf_counter() - t0)
+            box.markdown(re.sub(r"\[(\d+)\]", r"**[\1]**", text) + " ▌")
+
+        t0 = time.perf_counter()
+        ans = copilot.ask(question, on_text=show)
+
     linked = re.sub(r"\[(\d+)\]", r"**[\1]**", ans.answer)
-    st.markdown(linked)
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Latency", f"{ans.latency_ms / 1000:.1f} s")
+    if not ans.answerable:
+        box.empty()
+        st.warning("The filings in the corpus don't contain enough to answer this fully.")
+        st.markdown(linked)
+    else:
+        box.markdown(linked)
+    m0, m1, m2, m3 = st.columns(4)
+    m0.metric("First words after", f"{first_token[0]:.1f} s" if first_token else "–")
+    m1.metric("Full answer", f"{ans.latency_ms / 1000:.1f} s")
     m2.metric("Cost", f"${ans.cost_usd:.4f}")
     m3.metric("Passages cited", f"{len(ans.citations)} / {len(ans.passages)}")
 

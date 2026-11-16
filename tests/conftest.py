@@ -109,7 +109,7 @@ class FakeAnthropic:
 
     def __init__(self, reply):
         self.calls = []
-        self.messages = SimpleNamespace(create=self._create)
+        self.messages = SimpleNamespace(create=self._create, stream=self._stream)
         self._reply = reply
 
     def _create(self, **request):
@@ -134,3 +134,23 @@ class FakeAnthropic:
             usage=usage,
             stop_reason=stop_reason,
         )
+
+    def _stream(self, **request):
+        """messages.stream: the reply from _create, delivered in small text chunks."""
+        resp = self._create(**request)
+        text = resp.content[0].text
+        chunks = [text[i : i + 7] for i in range(0, len(text), 7)]
+
+        class _Stream:
+            text_stream = iter(chunks)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def get_final_message(self):
+                return resp
+
+        return _Stream()
