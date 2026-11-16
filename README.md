@@ -222,7 +222,6 @@ tests/         unit tests with a synthetic 10-K and stand-in models (no network,
 - **Synthetic questions** skew toward what is easy to ask about a single passage. Multi-hop and unanswerable questions are included to counter this, and the review step removes unnatural ones.
 - **Model sizes are chosen for a laptop CPU.** The full pipeline, including four embedding variants for the ablation and a reranker in the ablation, runs on an Intel MacBook with no GPU. A larger embedder (`bge-large-en-v1.5`) and reranker (`bge-reranker-v2-m3`) are one config change away on a GPU and would likely lift absolute scores; the ablation measures relative gains, which this setup captures.
 - **Corpus size.** 24 filings is enough to separate the techniques, not to claim production scale. The exact dense index would be swapped for an ANN index (HNSW) beyond a few hundred thousand chunks.
-- **Numbers from tables** are read by the LLM, not computed. A natural extension is routing quantitative questions to the structured XBRL data, which the multi-agent project does.
 
 ## How this was built
 
